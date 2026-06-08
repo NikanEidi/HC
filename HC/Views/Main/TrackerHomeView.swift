@@ -2,417 +2,303 @@
 //  TrackerHomeView.swift
 //  HC
 //
-//  Root — asymmetric layout, ANSI terminal with detailed ASCII dragon,
-//  no emoji, Apple Pencil compatible, full logic.
+//  ╔═══════════════════════════════════════════════════════════════╗
+//  ║  Root composition — Asymmetric split layout:                  ║
+//  ║    LEFT:  GlitchFlipContainer (Calendar <-> Timesheet)       ║
+//  ║    RIGHT: ANSI-styled Dragon Terminal with live data feed    ║
+//  ║                                                               ║
+//  ║  Forge palette. Apple Pencil hover. Full logic wired.        ║
+//  ╚═══════════════════════════════════════════════════════════════╝
 //
 
 import SwiftUI
 
 struct TrackerHomeView: View {
-    @State private var viewModel = TrackerViewModel()
-    @State private var isFlipped = false
-    @State private var terminalLines: [TerminalLine] = []
-    @State private var cursorVisible = true
-    @State private var showCopiedToast = false
-    @State private var uptimeSeconds = 0
+
+    @State private var vm = TrackerViewModel()
+    @State private var flipped = false
+    @State private var lines: [TLine] = []
+    @State private var blink = true
+    @State private var toast = false
+    @State private var uptime = 0
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
                 GlassmorphismBG()
 
-                HStack(alignment: .top, spacing: 28) {
-                    leftPanel(geo: geo)
-                    rightPanel(geo: geo)
+                HStack(alignment: .top, spacing: 30) {
+                    cardPanel(geo).frame(width: min(geo.size.width * 0.45, 490))
+                    terminal.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .padding(.horizontal, 36)
-                .padding(.vertical, 28)
+                .padding(.horizontal, 40)
+                .padding(.vertical, 32)
 
-                if showCopiedToast {
-                    copiedToast
-                        .transition(.asymmetric(
-                            insertion: .scale(scale: 0.9).combined(with: .opacity),
-                            removal: .opacity
-                        ))
-                }
+                if toast { toastBanner.transition(.scale(scale: 0.92).combined(with: .opacity)) }
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear { startSystems() }
-        .onChange(of: viewModel.sessions) { _, _ in refreshTerminalLog() }
+        .onAppear { boot() }
+        .onChange(of: vm.sessions) { _, _ in render() }
     }
 
-    // MARK: - Left Panel
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Left Panel (Card)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private func leftPanel(geo: GeometryProxy) -> some View {
-        VStack(spacing: 18) {
-            HStack(spacing: 12) {
-                flipButton
-                Spacer()
-                if isFlipped { copyButton }
-                statusPill
-            }
-
-            GlitchFlipContainer(isFlipped: $isFlipped) {
-                GlassCalendarView(viewModel: viewModel)
+    private func cardPanel(_ geo: GeometryProxy) -> some View {
+        VStack(spacing: 20) {
+            HStack(spacing: 14) { flipBtn; Spacer(); if flipped { exportBtn }; pill }
+            GlitchFlipContainer(isFlipped: $flipped) {
+                GlassCalendarView(viewModel: vm)
             } back: {
-                TimeInputTableView(viewModel: viewModel)
-            }
-            .frame(maxHeight: .infinity)
+                TimeInputTableView(viewModel: vm)
+            }.frame(maxHeight: .infinity)
         }
-        .frame(width: min(geo.size.width * 0.46, 480))
     }
 
-    // MARK: - Right Panel
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Right Panel (Terminal)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private func rightPanel(geo: GeometryProxy) -> some View {
+    private var terminal: some View {
         VStack(alignment: .leading, spacing: 0) {
-            terminalTitleBar
-            terminalStatusBar
-            Divider().background(NeoTokyo.neonCyan.opacity(0.1))
-            terminalBody
+            titleBar
+            statusBar
+            Rectangle().fill(Forge.cipher.opacity(0.08)).frame(height: 0.5)
+            body_
         }
-        .glassCard(cornerRadius: 18, strokeOpacity: 0.08, glowColor: NeoTokyo.neonCyan)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .glassCard(radius: 16, border: 0.06, glow: Forge.cipher)
     }
 
-    // MARK: - Terminal Title Bar
+    // ── Title Bar ──
 
-    private var terminalTitleBar: some View {
+    private var titleBar: some View {
         HStack(spacing: 0) {
             HStack(spacing: 7) {
-                Circle().fill(NeoTokyo.laserRed).frame(width: 11, height: 11)
-                    .overlay(Circle().strokeBorder(.black.opacity(0.2), lineWidth: 0.5))
-                Circle().fill(NeoTokyo.laserGold).frame(width: 11, height: 11)
-                    .overlay(Circle().strokeBorder(.black.opacity(0.2), lineWidth: 0.5))
-                Circle().fill(NeoTokyo.terminalGreen).frame(width: 11, height: 11)
-                    .overlay(Circle().strokeBorder(.black.opacity(0.2), lineWidth: 0.5))
-            }
-            .padding(.leading, 16)
-
+                Circle().fill(Forge.crimson).frame(width: 11, height: 11)
+                Circle().fill(Forge.ember).frame(width: 11, height: 11)
+                Circle().fill(Forge.jade).frame(width: 11, height: 11)
+            }.padding(.leading, 18)
             Spacer()
-
-            Text("HC://DRAGON-TERMINAL v1.0")
+            Text("HC://DRAGON-TERMINAL v2.0")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.35))
-                .tracking(1.5)
-
+                .foregroundColor(Forge.steel.opacity(0.45)).tracking(1.5)
             Spacer()
-
             HStack(spacing: 5) {
-                Circle()
-                    .fill(NeoTokyo.terminalGreen)
-                    .frame(width: 6, height: 6)
-                    .shadow(color: NeoTokyo.terminalGreen.opacity(0.8), radius: 4)
-                Text("LIVE")
-                    .font(.system(size: 8, weight: .black, design: .monospaced))
-                    .foregroundColor(NeoTokyo.terminalGreen.opacity(0.6))
-                    .tracking(2)
-            }
-            .padding(.trailing, 16)
+                Circle().fill(Forge.jade).frame(width: 6, height: 6).shadow(color: Forge.jade.opacity(0.7), radius: 4)
+                Text("LIVE").font(.system(size: 8, weight: .black, design: .monospaced))
+                    .foregroundColor(Forge.jade.opacity(0.55)).tracking(2)
+            }.padding(.trailing, 18)
         }
-        .padding(.vertical, 10)
-        .background(Color.white.opacity(0.015))
+        .padding(.vertical, 11).background(Forge.frost.opacity(0.012))
     }
 
-    // MARK: - Status Bar
+    // ── Status Bar ──
 
-    private var terminalStatusBar: some View {
+    private var statusBar: some View {
         HStack(spacing: 0) {
-            statusTag(label: "SYS", value: "ONLINE", color: NeoTokyo.terminalGreen)
-            barDiv
-            statusTag(label: "SESS", value: "\(viewModel.sessions.count)", color: NeoTokyo.neonCyan)
-            barDiv
-            statusTag(label: "TOTAL", value: viewModel.sessions.isEmpty ? "--:--" : viewModel.calculateTotalHours(), color: NeoTokyo.neonPurple)
-            barDiv
-            statusTag(label: "UP", value: formatUptime(), color: .white.opacity(0.4))
+            tag("SYS", "ONLINE", Forge.jade)
+            sep; tag("SESS", "\(vm.sessions.count)", Forge.cipher)
+            sep; tag("HRS", vm.sessions.isEmpty ? "--:--" : vm.calculateTotalHours(), Forge.arcane)
+            sep; tag("UP", fmtUp(), Forge.steel.opacity(0.5))
             Spacer()
         }
-        .padding(.horizontal, 16).padding(.vertical, 7)
-        .background(Color.white.opacity(0.01))
+        .padding(.horizontal, 18).padding(.vertical, 8).background(Forge.frost.opacity(0.008))
     }
 
-    private func statusTag(label: String, value: String, color: Color) -> some View {
+    private func tag(_ l: String, _ v: String, _ c: Color) -> some View {
         HStack(spacing: 4) {
-            Text(label)
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.2)).tracking(1)
-            Text(value)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(color)
+            Text(l).font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundColor(Forge.steel.opacity(0.3)).tracking(1)
+            Text(v).font(.system(size: 9, weight: .bold, design: .monospaced)).foregroundColor(c)
         }
     }
-
-    private var barDiv: some View {
-        Text("|")
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundColor(.white.opacity(0.08))
-            .padding(.horizontal, 8)
+    private var sep: some View {
+        Text("|").font(.system(size: 10, design: .monospaced)).foregroundColor(Forge.frost.opacity(0.06)).padding(.horizontal, 10)
     }
 
-    // MARK: - Terminal Body
+    // ── Body ──
 
-    private var terminalBody: some View {
-        ScrollViewReader { proxy in
+    private var body_: some View {
+        ScrollViewReader { px in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 1) {
-                    ForEach(Array(terminalLines.enumerated()), id: \.offset) { idx, line in
-                        terminalRow(line).id(idx)
-                    }
-
-                    HStack(spacing: 0) {
-                        Text("root@hc")
-                            .foregroundColor(NeoTokyo.laserRed.opacity(0.5))
-                        Text(":")
-                            .foregroundColor(.white.opacity(0.3))
-                        Text("~")
-                            .foregroundColor(NeoTokyo.neonCyan.opacity(0.5))
-                        Text("$ ")
-                            .foregroundColor(.white.opacity(0.3))
-                        Rectangle()
-                            .fill(NeoTokyo.terminalGreen)
-                            .frame(width: 8, height: 14)
-                            .opacity(cursorVisible ? 0.9 : 0)
-                    }
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .id("cursor")
-                }
-                .padding(.horizontal, 18).padding(.vertical, 14)
+                    ForEach(Array(lines.enumerated()), id: \.offset) { i, l in row(l).id(i) }
+                    prompt.id("cur")
+                }.padding(.horizontal, 20).padding(.vertical, 16)
             }
-            .onChange(of: terminalLines.count) { _, _ in
-                withAnimation(.easeOut(duration: 0.3)) {
-                    proxy.scrollTo("cursor", anchor: .bottom)
-                }
+            .onChange(of: lines.count) { _, _ in
+                withAnimation(.easeOut(duration: 0.25)) { px.scrollTo("cur", anchor: .bottom) }
             }
         }
     }
 
-    @ViewBuilder
-    private func terminalRow(_ line: TerminalLine) -> some View {
+    @ViewBuilder private func row(_ l: TLine) -> some View {
         HStack(spacing: 0) {
-            if line.showLineNumber {
-                Text(String(format: "%3d", line.lineNum))
-                    .foregroundColor(.white.opacity(0.08))
-                    .padding(.trailing, 8)
+            if l.ln {
+                Text(String(format: "%3d", l.n)).foregroundColor(Forge.steel.opacity(0.08)).padding(.trailing, 10)
             }
-            Text(line.content)
-                .foregroundColor(line.color)
+            Text(l.t).foregroundColor(l.c)
         }
-        .font(.system(size: 12, weight: line.bold ? .bold : .regular, design: .monospaced))
-        .padding(.vertical, 0.5)
+        .font(.system(size: 12, weight: l.b ? .bold : .regular, design: .monospaced)).padding(.vertical, 0.5)
     }
 
+    private var prompt: some View {
+        HStack(spacing: 0) {
+            Text("root@hc").foregroundColor(Forge.crimson.opacity(0.45))
+            Text(":").foregroundColor(Forge.steel.opacity(0.3))
+            Text("~").foregroundColor(Forge.cipher.opacity(0.45))
+            Text("$ ").foregroundColor(Forge.steel.opacity(0.3))
+            Rectangle().fill(Forge.jade).frame(width: 8, height: 14).opacity(blink ? 0.85 : 0)
+        }.font(.system(size: 12, weight: .medium, design: .monospaced))
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // MARK: - Buttons
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private var flipButton: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            isFlipped.toggle()
-        } label: {
+    private var flipBtn: some View {
+        Button { UIImpactFeedbackGenerator(style: .medium).impactOccurred(); flipped.toggle() } label: {
             HStack(spacing: 8) {
-                Image(systemName: isFlipped ? "calendar" : "tablecells")
-                    .font(.system(size: 13, weight: .bold))
-                Text(isFlipped ? "CALENDAR" : "TIMESHEET")
-                    .font(.system(size: 11, weight: .black, design: .monospaced))
-                    .tracking(2)
+                Image(systemName: flipped ? "calendar" : "tablecells").font(.system(size: 13, weight: .bold))
+                Text(flipped ? "CALENDAR" : "TIMESHEET")
+                    .font(.system(size: 11, weight: .black, design: .monospaced)).tracking(2)
             }
-            .foregroundColor(NeoTokyo.neonCyan)
-            .padding(.horizontal, 20).padding(.vertical, 12)
-            .background(
-                Capsule()
-                    .fill(NeoTokyo.neonCyan.opacity(0.05))
-                    .overlay(
-                        Capsule().strokeBorder(
-                            LinearGradient(colors: [NeoTokyo.neonCyan.opacity(0.25), NeoTokyo.neonCyan.opacity(0.05)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.6)
-                    )
-                    .shadow(color: NeoTokyo.neonCyan.opacity(0.1), radius: 12)
-            )
-        }
-        .hoverEffect(.lift)
+            .foregroundColor(Forge.cipher)
+            .padding(.horizontal, 22).padding(.vertical, 13)
+            .background(Capsule().fill(Forge.cipher.opacity(0.04))
+                .overlay(Capsule().strokeBorder(
+                    LinearGradient(colors: [Forge.cipher.opacity(0.20), Forge.cipher.opacity(0.04)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
+                .shadow(color: Forge.cipher.opacity(0.08), radius: 14))
+        }.hoverEffect(.lift)
     }
 
-    private var copyButton: some View {
+    private var exportBtn: some View {
         Button {
-            let report = viewModel.generateReportString()
-            guard !report.isEmpty else { return }
-            ClipboardManager.copy(report)
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { showCopiedToast = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                withAnimation(.easeOut) { showCopiedToast = false }
-            }
+            guard !vm.generateReportString().isEmpty else { return }
+            ClipboardManager.copy(vm.generateReportString())
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { toast = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { withAnimation(.easeOut) { toast = false } }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "doc.on.doc.fill").font(.system(size: 11))
                 Text("EXPORT").font(.system(size: 11, weight: .black, design: .monospaced)).tracking(2)
             }
-            .foregroundColor(NeoTokyo.terminalGreen)
-            .padding(.horizontal, 18).padding(.vertical, 12)
-            .background(
-                Capsule()
-                    .fill(NeoTokyo.terminalGreen.opacity(0.05))
-                    .overlay(
-                        Capsule().strokeBorder(
-                            LinearGradient(colors: [NeoTokyo.terminalGreen.opacity(0.25), NeoTokyo.terminalGreen.opacity(0.05)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.6)
-                    )
-                    .shadow(color: NeoTokyo.terminalGreen.opacity(0.1), radius: 12)
-            )
-        }
-        .hoverEffect(.lift)
+            .foregroundColor(Forge.jade)
+            .padding(.horizontal, 20).padding(.vertical, 13)
+            .background(Capsule().fill(Forge.jade.opacity(0.04))
+                .overlay(Capsule().strokeBorder(
+                    LinearGradient(colors: [Forge.jade.opacity(0.20), Forge.jade.opacity(0.04)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
+                .shadow(color: Forge.jade.opacity(0.08), radius: 14))
+        }.hoverEffect(.lift)
     }
 
-    private var statusPill: some View {
+    private var pill: some View {
         HStack(spacing: 5) {
-            Circle()
-                .fill(viewModel.sessions.isEmpty ? NeoTokyo.laserRed : NeoTokyo.terminalGreen)
-                .frame(width: 5, height: 5)
-                .shadow(color: (viewModel.sessions.isEmpty ? NeoTokyo.laserRed : NeoTokyo.terminalGreen).opacity(0.6), radius: 3)
-            Text(viewModel.sessions.isEmpty ? "IDLE" : "\(viewModel.sessions.count) ACTIVE")
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.3)).tracking(1.5)
+            Circle().fill(vm.sessions.isEmpty ? Forge.crimson : Forge.jade).frame(width: 5, height: 5)
+                .shadow(color: (vm.sessions.isEmpty ? Forge.crimson : Forge.jade).opacity(0.5), radius: 3)
+            Text(vm.sessions.isEmpty ? "IDLE" : "\(vm.sessions.count) ACTIVE")
+                .font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundColor(Forge.steel.opacity(0.35)).tracking(1.5)
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(
-            Capsule().fill(Color.white.opacity(0.02))
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.05), lineWidth: 0.5))
-        )
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(Capsule().fill(Forge.frost.opacity(0.015)).overlay(Capsule().strokeBorder(Forge.frost.opacity(0.04), lineWidth: 0.5)))
     }
 
     // MARK: - Toast
 
-    private var copiedToast: some View {
+    private var toastBanner: some View {
         VStack {
             HStack(spacing: 10) {
-                Text("[OK]")
-                    .font(.system(size: 12, weight: .black, design: .monospaced))
-                    .foregroundColor(NeoTokyo.terminalGreen)
+                Text("[OK]").font(.system(size: 12, weight: .black, design: .monospaced)).foregroundColor(Forge.jade)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("EXPORTED TO CLIPBOARD")
-                        .font(.system(size: 11, weight: .black, design: .monospaced))
-                        .foregroundColor(NeoTokyo.terminalGreen).tracking(1.5)
+                        .font(.system(size: 11, weight: .black, design: .monospaced)).foregroundColor(Forge.jade).tracking(1.5)
                     Text("Report ready to paste")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundColor(Forge.steel.opacity(0.4))
                 }
             }
-            .padding(.horizontal, 24).padding(.vertical, 14)
-            .glassCard(cornerRadius: 30, strokeOpacity: 0.08, glowColor: NeoTokyo.terminalGreen)
-            .overlay(Capsule().strokeBorder(NeoTokyo.terminalGreen.opacity(0.2), lineWidth: 0.5))
-            .shadow(color: NeoTokyo.terminalGreen.opacity(0.15), radius: 30)
-            .padding(.top, 24)
+            .padding(.horizontal, 26).padding(.vertical, 16)
+            .glassCard(radius: 28, border: 0.06, glow: Forge.jade)
+            .overlay(Capsule().strokeBorder(Forge.jade.opacity(0.15), lineWidth: 0.5))
+            .shadow(color: Forge.jade.opacity(0.12), radius: 25)
+            .padding(.top, 28)
             Spacer()
         }
     }
 
-    // MARK: - Terminal Content
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Terminal Renderer
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private func refreshTerminalLog() {
-        var lines: [TerminalLine] = []
-        var n = 1
-
-        // ── ASCII Dragon Header ──
+    private func render() {
+        var l: [TLine] = []; var n = 1
         let dragon = [
-            "                ___====-_  _-====___",
-            "          _--^^^#####//      \\\\#####^^^--_",
-            "       _-^##########// (    ) \\\\##########^-_",
-            "      -############//  |\\^^/|  \\\\############-",
-            "    _/############//   (@::@)   \\\\############\\_",
-            "   /#############((     \\\\//     ))#############\\",
-            "  -###############\\\\    (oo)    //###############-",
-            " -#################\\\\  / \" \\  //#################-",
-            "-###################\\\\/      \\//###################-",
-            "_#/|##########/\\######(   /\\   )######/\\##########|\\#_",
-            "|/ |#/\\#/\\#/\\/  \\#/\\##\\  |  |  /##/\\#/  \\/\\#/\\#/\\#| \\|",
-            "   |/  V  V      V   \\#\\ |  | /#/   V      V  V  \\|",
-            "                      \\#\\|  |/#/",
-            "                       \\#|  |#/",
-            "                        \\|  |/"
+            "                 \\                    /",
+            "      _    /\\     \\\\               / /    /\\",
+            "     / \\  / /\\     \\\\             / /    / /\\",
+            "    /   \\/ /  \\     \\\\           / /    /  \\ \\",
+            "   / /\\  /    _\\    \\\\         / /    _/   /\\ \\",
+            "  / /  \\/ /\\ / /     \\\\       / /    / /\\ /  \\ \\",
+            " / /   /  / / /       \\\\     / /    / / / \\   \\ \\",
+            "/ /   / _/ / /         \\\\___/ /    / / /   \\   \\ \\",
+            "\\/   / / \\/ /          /     /    / / /     \\  / /",
+            "    / /   / /          \\   \\/    / / /      / / /",
+            "   / /   / /            \\  /    / / /      / / /",
+            "  / /   / /              \\/    /_/_/      /_/ /",
+            "  \\/   /_/               /    (____\\     (___/",
+            "       (_)              /",
+            "                      /"
         ]
 
-        for art in dragon {
-            lines.append(TerminalLine(lineNum: n, content: art, color: NeoTokyo.neonCyan.opacity(0.3), showLineNumber: true))
-            n += 1
+        for a in dragon { l.append(TLine(n: n, t: a, c: Forge.cipher.opacity(0.25), ln: true)); n += 1 }
+        l.append(TLine(n: n, t: "", c: .clear, ln: false)); n += 1
+
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        l.append(TLine(n: n, t: "  [SYS] Midnight Forge v2.0 -- \(df.string(from: Date()))", c: Forge.steel.opacity(0.25), ln: true)); n += 1
+        for mod in ["Calendar engine", "Haptic subsystem", "Clipboard bridge", "Pencil input", "Glitch renderer"] {
+            let pad = String(repeating: ".", count: 30 - mod.count)
+            l.append(TLine(n: n, t: "  [SYS] \(mod) \(pad) [OK]", c: Forge.jade.opacity(0.35), ln: true)); n += 1
         }
+        l.append(TLine(n: n, t: "", c: .clear, ln: false)); n += 1
 
-        lines.append(TerminalLine(lineNum: n, content: "", color: .clear, showLineNumber: false)); n += 1
+        l.append(TLine(n: n, t: "  +================================================+", c: Forge.cipher.opacity(0.18), ln: true)); n += 1
+        l.append(TLine(n: n, t: "  |            WORK SESSION REPORT                  |", c: Forge.cipher.opacity(0.45), b: true, ln: true)); n += 1
+        l.append(TLine(n: n, t: "  +================================================+", c: Forge.cipher.opacity(0.18), ln: true)); n += 1
+        l.append(TLine(n: n, t: "", c: .clear, ln: false)); n += 1
 
-        // ── System Boot ──
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Dragon Terminal initialized \(df.string(from: Date()))", color: .white.opacity(0.2), showLineNumber: true)); n += 1
-        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Calendar engine .............. [OK]", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); n += 1
-        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Haptic subsystem ............. [OK]", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); n += 1
-        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Clipboard bridge ............. [OK]", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); n += 1
-        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Pencil input handler ......... [OK]", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); n += 1
-        lines.append(TerminalLine(lineNum: n, content: "", color: .clear, showLineNumber: false)); n += 1
-
-        // ── Report Section ──
-        lines.append(TerminalLine(lineNum: n, content: "  +============================================+", color: NeoTokyo.neonCyan.opacity(0.2), showLineNumber: true)); n += 1
-        lines.append(TerminalLine(lineNum: n, content: "  |          WORK SESSION REPORT                |", color: NeoTokyo.neonCyan.opacity(0.5), bold: true, showLineNumber: true)); n += 1
-        lines.append(TerminalLine(lineNum: n, content: "  +============================================+", color: NeoTokyo.neonCyan.opacity(0.2), showLineNumber: true)); n += 1
-        lines.append(TerminalLine(lineNum: n, content: "", color: .clear, showLineNumber: false)); n += 1
-
-        if viewModel.sessions.isEmpty {
-            lines.append(TerminalLine(lineNum: n, content: "  [!] WARNING: No sessions recorded", color: NeoTokyo.laserGold.opacity(0.5), showLineNumber: true)); n += 1
-            lines.append(TerminalLine(lineNum: n, content: "  --> Select dates from the calendar to begin", color: .white.opacity(0.2), showLineNumber: true)); n += 1
+        if vm.sessions.isEmpty {
+            l.append(TLine(n: n, t: "  [!] WARNING: No sessions recorded", c: Forge.ember.opacity(0.45), ln: true)); n += 1
+            l.append(TLine(n: n, t: "  --> Select dates from the calendar", c: Forge.steel.opacity(0.2), ln: true))
         } else {
-            let sessionDF = DateFormatter()
-            sessionDF.dateFormat = "d MMM"
-
-            for (i, session) in viewModel.sessions.enumerated() {
-                let dateStr = sessionDF.string(from: session.date)
-                let isWknd = viewModel.isWeekend(session.date)
-                let tag = isWknd ? "[WE]" : "[WD]"
-
-                lines.append(TerminalLine(
-                    lineNum: n,
-                    content: "  \(tag) [\(String(format: "%02d", i + 1))] \(dateStr): \(session.startTimeString) --> \(session.endTimeString)",
-                    color: isWknd ? NeoTokyo.laserGold.opacity(0.8) : NeoTokyo.terminalGreen.opacity(0.85),
-                    bold: true, showLineNumber: true
-                )); n += 1
-
-                lines.append(TerminalLine(
-                    lineNum: n,
-                    content: "        Hour: \(session.durationString)",
-                    color: NeoTokyo.neonPurple.opacity(0.65), showLineNumber: true
-                )); n += 1
+            let sdf = DateFormatter(); sdf.dateFormat = "d MMM"
+            for (i, s) in vm.sessions.enumerated() {
+                let w = vm.isWeekend(s.date); let tag = w ? "[WE]" : "[WD]"
+                l.append(TLine(n: n, t: "  \(tag) [\(String(format: "%02d", i+1))] \(sdf.string(from: s.date)): \(s.startTimeString) --> \(s.endTimeString)",
+                               c: w ? Forge.ember.opacity(0.8) : Forge.jade.opacity(0.85), b: true, ln: true)); n += 1
+                l.append(TLine(n: n, t: "        Hour: \(s.durationString)", c: Forge.arcane.opacity(0.6), ln: true)); n += 1
             }
-
-            lines.append(TerminalLine(lineNum: n, content: "", color: .clear, showLineNumber: false)); n += 1
-            lines.append(TerminalLine(lineNum: n, content: "  +--------------------------------------------+", color: NeoTokyo.neonCyan.opacity(0.15), showLineNumber: true)); n += 1
-            lines.append(TerminalLine(lineNum: n, content: "  | >>> Total Hours: \(viewModel.calculateTotalHours())", color: NeoTokyo.neonCyan, bold: true, showLineNumber: true)); n += 1
-            lines.append(TerminalLine(lineNum: n, content: "  +--------------------------------------------+", color: NeoTokyo.neonCyan.opacity(0.15), showLineNumber: true)); n += 1
+            l.append(TLine(n: n, t: "", c: .clear, ln: false)); n += 1
+            l.append(TLine(n: n, t: "  +------------------------------------------------+", c: Forge.cipher.opacity(0.12), ln: true)); n += 1
+            l.append(TLine(n: n, t: "  | >>> Total Hours: \(vm.calculateTotalHours())", c: Forge.cipher, b: true, ln: true)); n += 1
+            l.append(TLine(n: n, t: "  +------------------------------------------------+", c: Forge.cipher.opacity(0.12), ln: true))
         }
-
-        terminalLines = lines
+        lines = l
     }
 
-    // MARK: - Systems
+    // MARK: - Boot Sequence
 
-    private func startSystems() {
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in cursorVisible.toggle() }
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in uptimeSeconds += 1 }
-        refreshTerminalLog()
+    private func boot() {
+        Timer.scheduledTimer(withTimeInterval: 0.45, repeats: true) { _ in blink.toggle() }
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in uptime += 1 }
+        render()
     }
 
-    private func formatUptime() -> String {
-        let m = uptimeSeconds / 60
-        let s = uptimeSeconds % 60
-        return String(format: "%02d:%02d", m, s)
-    }
+    private func fmtUp() -> String { String(format: "%02d:%02d", uptime / 60, uptime % 60) }
 }
 
-// MARK: - Terminal Line Model
+/// A single terminal output line with metadata for rendering.
+struct TLine { let n: Int; let t: String; let c: Color; var b: Bool = false; var ln: Bool = true }
 
-struct TerminalLine {
-    let lineNum: Int
-    let content: String
-    let color: Color
-    var bold: Bool = false
-    var showLineNumber: Bool = true
-}
-
-#Preview {
-    TrackerHomeView()
-}
+#Preview { TrackerHomeView() }
