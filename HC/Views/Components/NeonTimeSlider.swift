@@ -45,7 +45,7 @@ struct NeonTimeSlider: View {
                 Spacer()
 
                 HStack(spacing: 0) {
-                    Text("\(minutes / 60)")
+                    Text(String(format: "%02d", minutes / 60))
                         .foregroundColor(accent)
                     Text(":")
                         .foregroundColor(accent.opacity(0.4))
