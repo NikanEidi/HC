@@ -2,8 +2,8 @@
 //  TrackerHomeView.swift
 //  HC
 //
-//  Root — asymmetric layout, ANSI terminal, dragon motif,
-//  premium buttons, and glitch flip container.
+//  Root — asymmetric layout, ANSI terminal with detailed ASCII dragon,
+//  no emoji, Apple Pencil compatible, full logic.
 //
 
 import SwiftUI
@@ -14,7 +14,6 @@ struct TrackerHomeView: View {
     @State private var terminalLines: [TerminalLine] = []
     @State private var cursorVisible = true
     @State private var showCopiedToast = false
-    @State private var bootComplete = false
     @State private var uptimeSeconds = 0
 
     var body: some View {
@@ -22,7 +21,6 @@ struct TrackerHomeView: View {
             ZStack {
                 GlassmorphismBG()
 
-                // ── Main Layout ──
                 HStack(alignment: .top, spacing: 28) {
                     leftPanel(geo: geo)
                     rightPanel(geo: geo)
@@ -30,7 +28,6 @@ struct TrackerHomeView: View {
                 .padding(.horizontal, 36)
                 .padding(.vertical, 28)
 
-                // ── Toast ──
                 if showCopiedToast {
                     copiedToast
                         .transition(.asymmetric(
@@ -41,19 +38,14 @@ struct TrackerHomeView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear {
-            startSystems()
-        }
-        .onChange(of: viewModel.sessions) { _, _ in
-            refreshTerminalLog()
-        }
+        .onAppear { startSystems() }
+        .onChange(of: viewModel.sessions) { _, _ in refreshTerminalLog() }
     }
 
     // MARK: - Left Panel
 
     private func leftPanel(geo: GeometryProxy) -> some View {
         VStack(spacing: 18) {
-            // ── Top Bar ──
             HStack(spacing: 12) {
                 flipButton
                 Spacer()
@@ -61,7 +53,6 @@ struct TrackerHomeView: View {
                 statusPill
             }
 
-            // ── Card ──
             GlitchFlipContainer(isFlipped: $isFlipped) {
                 GlassCalendarView(viewModel: viewModel)
             } back: {
@@ -72,7 +63,7 @@ struct TrackerHomeView: View {
         .frame(width: min(geo.size.width * 0.46, 480))
     }
 
-    // MARK: - Right Panel (ANSI Terminal)
+    // MARK: - Right Panel
 
     private func rightPanel(geo: GeometryProxy) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -89,7 +80,6 @@ struct TrackerHomeView: View {
 
     private var terminalTitleBar: some View {
         HStack(spacing: 0) {
-            // Traffic lights
             HStack(spacing: 7) {
                 Circle().fill(NeoTokyo.laserRed).frame(width: 11, height: 11)
                     .overlay(Circle().strokeBorder(.black.opacity(0.2), lineWidth: 0.5))
@@ -102,20 +92,13 @@ struct TrackerHomeView: View {
 
             Spacer()
 
-            // Title
-            HStack(spacing: 6) {
-                Text("⬡")
-                    .font(.system(size: 10))
-                    .foregroundColor(NeoTokyo.neonCyan.opacity(0.5))
-                Text("HC://DRAGON-TERMINAL v1.0")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.35))
-                    .tracking(1.5)
-            }
+            Text("HC://DRAGON-TERMINAL v1.0")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.35))
+                .tracking(1.5)
 
             Spacer()
 
-            // Live indicator
             HStack(spacing: 5) {
                 Circle()
                     .fill(NeoTokyo.terminalGreen)
@@ -132,21 +115,20 @@ struct TrackerHomeView: View {
         .background(Color.white.opacity(0.015))
     }
 
-    // MARK: - Terminal Status Bar
+    // MARK: - Status Bar
 
     private var terminalStatusBar: some View {
         HStack(spacing: 0) {
             statusTag(label: "SYS", value: "ONLINE", color: NeoTokyo.terminalGreen)
-            dividerBar
+            barDiv
             statusTag(label: "SESS", value: "\(viewModel.sessions.count)", color: NeoTokyo.neonCyan)
-            dividerBar
+            barDiv
             statusTag(label: "TOTAL", value: viewModel.sessions.isEmpty ? "--:--" : viewModel.calculateTotalHours(), color: NeoTokyo.neonPurple)
-            dividerBar
+            barDiv
             statusTag(label: "UP", value: formatUptime(), color: .white.opacity(0.4))
             Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 16).padding(.vertical, 7)
         .background(Color.white.opacity(0.01))
     }
 
@@ -154,16 +136,15 @@ struct TrackerHomeView: View {
         HStack(spacing: 4) {
             Text(label)
                 .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.2))
-                .tracking(1)
+                .foregroundColor(.white.opacity(0.2)).tracking(1)
             Text(value)
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(color)
         }
     }
 
-    private var dividerBar: some View {
-        Text("│")
+    private var barDiv: some View {
+        Text("|")
             .font(.system(size: 10, design: .monospaced))
             .foregroundColor(.white.opacity(0.08))
             .padding(.horizontal, 8)
@@ -176,11 +157,9 @@ struct TrackerHomeView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(Array(terminalLines.enumerated()), id: \.offset) { idx, line in
-                        terminalRow(line)
-                            .id(idx)
+                        terminalRow(line).id(idx)
                     }
 
-                    // Blinking cursor
                     HStack(spacing: 0) {
                         Text("root@hc")
                             .foregroundColor(NeoTokyo.laserRed.opacity(0.5))
@@ -198,8 +177,7 @@ struct TrackerHomeView: View {
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .id("cursor")
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 18).padding(.vertical, 14)
             }
             .onChange(of: terminalLines.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
@@ -214,7 +192,7 @@ struct TrackerHomeView: View {
         HStack(spacing: 0) {
             if line.showLineNumber {
                 Text(String(format: "%3d", line.lineNum))
-                    .foregroundColor(.white.opacity(0.10))
+                    .foregroundColor(.white.opacity(0.08))
                     .padding(.trailing, 8)
             }
             Text(line.content)
@@ -239,21 +217,19 @@ struct TrackerHomeView: View {
                     .tracking(2)
             }
             .foregroundColor(NeoTokyo.neonCyan)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 20).padding(.vertical, 12)
             .background(
                 Capsule()
                     .fill(NeoTokyo.neonCyan.opacity(0.05))
                     .overlay(
                         Capsule().strokeBorder(
                             LinearGradient(colors: [NeoTokyo.neonCyan.opacity(0.25), NeoTokyo.neonCyan.opacity(0.05)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing),
-                            lineWidth: 0.6
-                        )
+                                           startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.6)
                     )
                     .shadow(color: NeoTokyo.neonCyan.opacity(0.1), radius: 12)
             )
         }
+        .hoverEffect(.lift)
     }
 
     private var copyButton: some View {
@@ -278,13 +254,12 @@ struct TrackerHomeView: View {
                     .overlay(
                         Capsule().strokeBorder(
                             LinearGradient(colors: [NeoTokyo.terminalGreen.opacity(0.25), NeoTokyo.terminalGreen.opacity(0.05)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing),
-                            lineWidth: 0.6
-                        )
+                                           startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.6)
                     )
                     .shadow(color: NeoTokyo.terminalGreen.opacity(0.1), radius: 12)
             )
         }
+        .hoverEffect(.lift)
     }
 
     private var statusPill: some View {
@@ -295,11 +270,9 @@ struct TrackerHomeView: View {
                 .shadow(color: (viewModel.sessions.isEmpty ? NeoTokyo.laserRed : NeoTokyo.terminalGreen).opacity(0.6), radius: 3)
             Text(viewModel.sessions.isEmpty ? "IDLE" : "\(viewModel.sessions.count) ACTIVE")
                 .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.3))
-                .tracking(1.5)
+                .foregroundColor(.white.opacity(0.3)).tracking(1.5)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10).padding(.vertical, 6)
         .background(
             Capsule().fill(Color.white.opacity(0.02))
                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.05), lineWidth: 0.5))
@@ -311,14 +284,13 @@ struct TrackerHomeView: View {
     private var copiedToast: some View {
         VStack {
             HStack(spacing: 10) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 16))
+                Text("[OK]")
+                    .font(.system(size: 12, weight: .black, design: .monospaced))
                     .foregroundColor(NeoTokyo.terminalGreen)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("EXPORTED TO CLIPBOARD")
                         .font(.system(size: 11, weight: .black, design: .monospaced))
-                        .foregroundColor(NeoTokyo.terminalGreen)
-                        .tracking(1.5)
+                        .foregroundColor(NeoTokyo.terminalGreen).tracking(1.5)
                     Text("Report ready to paste")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundColor(.white.opacity(0.3))
@@ -326,55 +298,64 @@ struct TrackerHomeView: View {
             }
             .padding(.horizontal, 24).padding(.vertical, 14)
             .glassCard(cornerRadius: 30, strokeOpacity: 0.08, glowColor: NeoTokyo.terminalGreen)
-            .overlay(
-                Capsule().strokeBorder(NeoTokyo.terminalGreen.opacity(0.2), lineWidth: 0.5)
-            )
+            .overlay(Capsule().strokeBorder(NeoTokyo.terminalGreen.opacity(0.2), lineWidth: 0.5))
             .shadow(color: NeoTokyo.terminalGreen.opacity(0.15), radius: 30)
             .padding(.top, 24)
             Spacer()
         }
     }
 
-    // MARK: - Terminal Content Builder
+    // MARK: - Terminal Content
 
     private func refreshTerminalLog() {
         var lines: [TerminalLine] = []
-        var num = 1
+        var n = 1
 
-        // Dragon ASCII header
-        let dragonArt = [
-            "            /\\_/\\",
-            "           ( o.o )",
-            "            > ^ <     ╔══════════════════════════════════╗",
-            "           /|   |\\    ║   🐉  HC DRAGON TERMINAL  v1.0  ║",
-            "          (_|   |_)   ╚══════════════════════════════════╝"
+        // ── ASCII Dragon Header ──
+        let dragon = [
+            "                ___====-_  _-====___",
+            "          _--^^^#####//      \\\\#####^^^--_",
+            "       _-^##########// (    ) \\\\##########^-_",
+            "      -############//  |\\^^/|  \\\\############-",
+            "    _/############//   (@::@)   \\\\############\\_",
+            "   /#############((     \\\\//     ))#############\\",
+            "  -###############\\\\    (oo)    //###############-",
+            " -#################\\\\  / \" \\  //#################-",
+            "-###################\\\\/      \\//###################-",
+            "_#/|##########/\\######(   /\\   )######/\\##########|\\#_",
+            "|/ |#/\\#/\\#/\\/  \\#/\\##\\  |  |  /##/\\#/  \\/\\#/\\#/\\#| \\|",
+            "   |/  V  V      V   \\#\\ |  | /#/   V      V  V  \\|",
+            "                      \\#\\|  |/#/",
+            "                       \\#|  |#/",
+            "                        \\|  |/"
         ]
 
-        for art in dragonArt {
-            lines.append(TerminalLine(lineNum: num, content: art, color: NeoTokyo.neonCyan.opacity(0.4), bold: false, showLineNumber: true))
-            num += 1
+        for art in dragon {
+            lines.append(TerminalLine(lineNum: n, content: art, color: NeoTokyo.neonCyan.opacity(0.3), showLineNumber: true))
+            n += 1
         }
 
-        lines.append(TerminalLine(lineNum: num, content: "", color: .clear, showLineNumber: false)); num += 1
+        lines.append(TerminalLine(lineNum: n, content: "", color: .clear, showLineNumber: false)); n += 1
 
-        // System info
+        // ── System Boot ──
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        lines.append(TerminalLine(lineNum: num, content: "  [SYS] Initialized at \(df.string(from: Date()))", color: .white.opacity(0.2), showLineNumber: true)); num += 1
-        lines.append(TerminalLine(lineNum: num, content: "  [SYS] Calendar engine .............. ✓ OK", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); num += 1
-        lines.append(TerminalLine(lineNum: num, content: "  [SYS] Haptic subsystem ............. ✓ OK", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); num += 1
-        lines.append(TerminalLine(lineNum: num, content: "  [SYS] Clipboard bridge ............. ✓ OK", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); num += 1
-        lines.append(TerminalLine(lineNum: num, content: "", color: .clear, showLineNumber: false)); num += 1
+        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Dragon Terminal initialized \(df.string(from: Date()))", color: .white.opacity(0.2), showLineNumber: true)); n += 1
+        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Calendar engine .............. [OK]", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); n += 1
+        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Haptic subsystem ............. [OK]", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); n += 1
+        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Clipboard bridge ............. [OK]", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); n += 1
+        lines.append(TerminalLine(lineNum: n, content: "  [SYS] Pencil input handler ......... [OK]", color: NeoTokyo.terminalGreen.opacity(0.4), showLineNumber: true)); n += 1
+        lines.append(TerminalLine(lineNum: n, content: "", color: .clear, showLineNumber: false)); n += 1
 
-        // Separator
-        lines.append(TerminalLine(lineNum: num, content: "  ╔══════════════════════════════════════════╗", color: NeoTokyo.neonCyan.opacity(0.2), showLineNumber: true)); num += 1
-        lines.append(TerminalLine(lineNum: num, content: "  ║          WORK SESSION REPORT             ║", color: NeoTokyo.neonCyan.opacity(0.5), bold: true, showLineNumber: true)); num += 1
-        lines.append(TerminalLine(lineNum: num, content: "  ╚══════════════════════════════════════════╝", color: NeoTokyo.neonCyan.opacity(0.2), showLineNumber: true)); num += 1
-        lines.append(TerminalLine(lineNum: num, content: "", color: .clear, showLineNumber: false)); num += 1
+        // ── Report Section ──
+        lines.append(TerminalLine(lineNum: n, content: "  +============================================+", color: NeoTokyo.neonCyan.opacity(0.2), showLineNumber: true)); n += 1
+        lines.append(TerminalLine(lineNum: n, content: "  |          WORK SESSION REPORT                |", color: NeoTokyo.neonCyan.opacity(0.5), bold: true, showLineNumber: true)); n += 1
+        lines.append(TerminalLine(lineNum: n, content: "  +============================================+", color: NeoTokyo.neonCyan.opacity(0.2), showLineNumber: true)); n += 1
+        lines.append(TerminalLine(lineNum: n, content: "", color: .clear, showLineNumber: false)); n += 1
 
         if viewModel.sessions.isEmpty {
-            lines.append(TerminalLine(lineNum: num, content: "  ⚠ [IDLE] No sessions recorded", color: NeoTokyo.laserGold.opacity(0.5), showLineNumber: true)); num += 1
-            lines.append(TerminalLine(lineNum: num, content: "  → Select dates from the calendar to begin", color: .white.opacity(0.2), showLineNumber: true)); num += 1
+            lines.append(TerminalLine(lineNum: n, content: "  [!] WARNING: No sessions recorded", color: NeoTokyo.laserGold.opacity(0.5), showLineNumber: true)); n += 1
+            lines.append(TerminalLine(lineNum: n, content: "  --> Select dates from the calendar to begin", color: .white.opacity(0.2), showLineNumber: true)); n += 1
         } else {
             let sessionDF = DateFormatter()
             sessionDF.dateFormat = "d MMM"
@@ -382,20 +363,26 @@ struct TrackerHomeView: View {
             for (i, session) in viewModel.sessions.enumerated() {
                 let dateStr = sessionDF.string(from: session.date)
                 let isWknd = viewModel.isWeekend(session.date)
-                let marker = isWknd ? "🔴" : "🟢"
+                let tag = isWknd ? "[WE]" : "[WD]"
 
-                lines.append(TerminalLine(lineNum: num, content: "  \(marker) [\(String(format: "%02d", i + 1))] \(dateStr): \(session.startTimeString) → \(session.endTimeString)",
-                                          color: isWknd ? NeoTokyo.laserGold.opacity(0.8) : NeoTokyo.terminalGreen.opacity(0.85),
-                                          bold: true, showLineNumber: true)); num += 1
-                lines.append(TerminalLine(lineNum: num, content: "       Hour: \(session.durationString)",
-                                          color: NeoTokyo.neonPurple.opacity(0.65), showLineNumber: true)); num += 1
+                lines.append(TerminalLine(
+                    lineNum: n,
+                    content: "  \(tag) [\(String(format: "%02d", i + 1))] \(dateStr): \(session.startTimeString) --> \(session.endTimeString)",
+                    color: isWknd ? NeoTokyo.laserGold.opacity(0.8) : NeoTokyo.terminalGreen.opacity(0.85),
+                    bold: true, showLineNumber: true
+                )); n += 1
+
+                lines.append(TerminalLine(
+                    lineNum: n,
+                    content: "        Hour: \(session.durationString)",
+                    color: NeoTokyo.neonPurple.opacity(0.65), showLineNumber: true
+                )); n += 1
             }
 
-            lines.append(TerminalLine(lineNum: num, content: "", color: .clear, showLineNumber: false)); num += 1
-            lines.append(TerminalLine(lineNum: num, content: "  ──────────────────────────────────────────", color: NeoTokyo.neonCyan.opacity(0.15), showLineNumber: true)); num += 1
-            lines.append(TerminalLine(lineNum: num, content: "  ★ Total Hours: \(viewModel.calculateTotalHours())",
-                                      color: NeoTokyo.neonCyan, bold: true, showLineNumber: true)); num += 1
-            lines.append(TerminalLine(lineNum: num, content: "  ──────────────────────────────────────────", color: NeoTokyo.neonCyan.opacity(0.15), showLineNumber: true)); num += 1
+            lines.append(TerminalLine(lineNum: n, content: "", color: .clear, showLineNumber: false)); n += 1
+            lines.append(TerminalLine(lineNum: n, content: "  +--------------------------------------------+", color: NeoTokyo.neonCyan.opacity(0.15), showLineNumber: true)); n += 1
+            lines.append(TerminalLine(lineNum: n, content: "  | >>> Total Hours: \(viewModel.calculateTotalHours())", color: NeoTokyo.neonCyan, bold: true, showLineNumber: true)); n += 1
+            lines.append(TerminalLine(lineNum: n, content: "  +--------------------------------------------+", color: NeoTokyo.neonCyan.opacity(0.15), showLineNumber: true)); n += 1
         }
 
         terminalLines = lines
@@ -404,14 +391,8 @@ struct TrackerHomeView: View {
     // MARK: - Systems
 
     private func startSystems() {
-        // Cursor blink
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            cursorVisible.toggle()
-        }
-        // Uptime counter
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            uptimeSeconds += 1
-        }
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in cursorVisible.toggle() }
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in uptimeSeconds += 1 }
         refreshTerminalLog()
     }
 
