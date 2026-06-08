@@ -2,7 +2,7 @@
 //  TimeInputTableView.swift
 //  HC
 //
-//  Back card — premium session rows with NeonTimeSliders.
+//  Back card — premium session rows, no emoji, Apple Pencil compatible.
 //
 
 import SwiftUI
@@ -15,7 +15,6 @@ struct TimeInputTableView: View {
             header
                 .padding(.horizontal, 22).padding(.top, 22).padding(.bottom, 14)
 
-            // Gradient divider
             Rectangle()
                 .fill(
                     LinearGradient(
@@ -53,8 +52,8 @@ struct TimeInputTableView: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
-                    Text("⬡")
-                        .font(.system(size: 12))
+                    Text(">>")
+                        .font(.system(size: 12, weight: .black, design: .monospaced))
                         .foregroundColor(NeoTokyo.neonPurple.opacity(0.5))
                     Text("TIMESHEET")
                         .font(.system(size: 14, weight: .black, design: .monospaced))
@@ -63,8 +62,7 @@ struct TimeInputTableView: View {
                 }
                 Text("\(viewModel.sessions.count) entr\(viewModel.sessions.count == 1 ? "y" : "ies") logged")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.3))
-                    .tracking(1)
+                    .foregroundColor(.white.opacity(0.3)).tracking(1)
             }
             Spacer()
             Button {
@@ -79,9 +77,9 @@ struct TimeInputTableView: View {
                 .background(
                     Capsule().fill(NeoTokyo.terminalGreen.opacity(0.05))
                         .overlay(Capsule().strokeBorder(NeoTokyo.terminalGreen.opacity(0.15), lineWidth: 0.5))
-                        .shadow(color: NeoTokyo.terminalGreen.opacity(0.06), radius: 8)
                 )
             }
+            .hoverEffect(.lift)
         }
     }
 
@@ -95,15 +93,13 @@ struct TimeInputTableView: View {
 
         return VStack(spacing: 14) {
             HStack {
-                // Index + Date
                 HStack(spacing: 8) {
                     Text(String(format: "%02d", index + 1))
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(.white.opacity(0.15))
                         .padding(.horizontal, 6).padding(.vertical, 3)
                         .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.white.opacity(0.03))
+                            RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.03))
                         )
 
                     Circle()
@@ -113,20 +109,16 @@ struct TimeInputTableView: View {
 
                     Text(df.string(from: session.date).uppercased())
                         .font(.system(size: 14, weight: .black, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.9))
-                        .tracking(1.5)
+                        .foregroundColor(.white.opacity(0.9)).tracking(1.5)
                 }
 
                 Spacer()
 
-                // Duration
                 Text(session.durationString)
                     .font(.system(size: 16, weight: .black, design: .monospaced))
                     .foregroundStyle(
-                        LinearGradient(
-                            colors: [NeoTokyo.neonCyan, NeoTokyo.neonPurple],
-                            startPoint: .leading, endPoint: .trailing
-                        )
+                        LinearGradient(colors: [NeoTokyo.neonCyan, NeoTokyo.neonPurple],
+                                       startPoint: .leading, endPoint: .trailing)
                     )
                     .shadow(color: NeoTokyo.neonCyan.opacity(0.35), radius: 8)
             }
@@ -141,12 +133,8 @@ struct TimeInputTableView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .strokeBorder(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.04), Color.white.opacity(0.01)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.5
-                        )
+                            LinearGradient(colors: [Color.white.opacity(0.04), Color.white.opacity(0.01)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5)
                 )
         )
     }
@@ -156,16 +144,13 @@ struct TimeInputTableView: View {
     private var emptyState: some View {
         VStack(spacing: 14) {
             Spacer()
-            Image(systemName: "calendar.badge.plus")
-                .font(.system(size: 36, weight: .light))
-                .foregroundColor(.white.opacity(0.10))
-
+            Text("---")
+                .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
+                .foregroundColor(.white.opacity(0.08))
             Text("NO SESSIONS")
                 .font(.system(size: 12, weight: .black, design: .monospaced))
-                .foregroundColor(.white.opacity(0.15))
-                .tracking(3)
-
-            Text("Flip to calendar → select dates")
+                .foregroundColor(.white.opacity(0.15)).tracking(3)
+            Text("Flip to calendar --> select dates")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundColor(.white.opacity(0.08))
             Spacer()
@@ -178,19 +163,19 @@ struct TimeInputTableView: View {
     private var totalBar: some View {
         HStack {
             HStack(spacing: 6) {
-                Text("★")
-                    .font(.system(size: 12))
-                    .foregroundColor(NeoTokyo.neonCyan.opacity(0.5))
+                Text(">>>")
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .foregroundColor(NeoTokyo.neonCyan.opacity(0.4))
                 Text("TOTAL HOURS")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.4))
-                    .tracking(2.5)
+                    .foregroundColor(.white.opacity(0.4)).tracking(2.5)
             }
             Spacer()
             Text(viewModel.calculateTotalHours())
                 .font(.system(size: 26, weight: .black, design: .monospaced))
                 .foregroundStyle(
-                    LinearGradient(colors: [NeoTokyo.neonCyan, NeoTokyo.neonPurple], startPoint: .leading, endPoint: .trailing)
+                    LinearGradient(colors: [NeoTokyo.neonCyan, NeoTokyo.neonPurple],
+                                   startPoint: .leading, endPoint: .trailing)
                 )
                 .shadow(color: NeoTokyo.neonCyan.opacity(0.3), radius: 12)
         }
@@ -201,14 +186,9 @@ struct TimeInputTableView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .strokeBorder(
-                            LinearGradient(
-                                colors: [NeoTokyo.neonCyan.opacity(0.12), NeoTokyo.neonPurple.opacity(0.12)],
-                                startPoint: .leading, endPoint: .trailing
-                            ),
-                            lineWidth: 0.5
-                        )
+                            LinearGradient(colors: [NeoTokyo.neonCyan.opacity(0.12), NeoTokyo.neonPurple.opacity(0.12)],
+                                           startPoint: .leading, endPoint: .trailing), lineWidth: 0.5)
                 )
-                .shadow(color: NeoTokyo.neonCyan.opacity(0.04), radius: 12)
         )
     }
 }
