@@ -4,7 +4,7 @@
 //
 //  Front card — Premium Neo-Tokyo glass calendar.
 //  Weekends: Laser Red/Gold. Weekdays: Neon Purple/Cyan.
-//  Micro-animations, glow, scan effect on header.
+//  Apple Pencil hover support, no emoji.
 //
 
 import SwiftUI
@@ -28,7 +28,6 @@ struct GlassCalendarView: View {
                 .padding(.horizontal, 18)
                 .padding(.bottom, 10)
 
-            // Gradient divider
             Rectangle()
                 .fill(
                     LinearGradient(
@@ -39,7 +38,6 @@ struct GlassCalendarView: View {
                 .frame(height: 0.5)
                 .padding(.horizontal, 22)
 
-            // Day Grid
             LazyVGrid(columns: columns, spacing: 7) {
                 ForEach(Array(viewModel.daysInMonth.enumerated()), id: \.offset) { _, date in
                     if let date = date {
@@ -88,11 +86,11 @@ struct GlassCalendarView: View {
                             .fill(NeoTokyo.neonCyan.opacity(0.06))
                             .overlay(Circle().strokeBorder(NeoTokyo.neonCyan.opacity(0.12), lineWidth: 0.5))
                     )
+                    .hoverEffect(.lift)
             }
 
             Spacer()
 
-            // Glowing month title
             VStack(spacing: 3) {
                 Text(viewModel.monthYearString.uppercased())
                     .font(.system(size: 16, weight: .black, design: .monospaced))
@@ -100,7 +98,6 @@ struct GlassCalendarView: View {
                     .tracking(4)
                     .shadow(color: NeoTokyo.neonCyan.opacity(0.3 + headerGlow * 0.2), radius: 8)
 
-                // Animated underline
                 Rectangle()
                     .fill(
                         LinearGradient(
@@ -126,6 +123,7 @@ struct GlassCalendarView: View {
                             .fill(NeoTokyo.neonCyan.opacity(0.06))
                             .overlay(Circle().strokeBorder(NeoTokyo.neonCyan.opacity(0.12), lineWidth: 0.5))
                     )
+                    .hoverEffect(.lift)
             }
         }
     }
@@ -176,20 +174,24 @@ struct GlassCalendarView: View {
                         .shadow(color: isWeekend ? NeoTokyo.laserRed.opacity(0.35) : NeoTokyo.neonPurple.opacity(0.35), radius: 10)
                 }
 
-                // Today ring
+                // Today: subtle thin bottom line, NOT green text
                 if isToday && !isSelected {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .strokeBorder(NeoTokyo.terminalGreen.opacity(0.35), lineWidth: 1)
-                        .shadow(color: NeoTokyo.terminalGreen.opacity(0.1), radius: 6)
+                    VStack {
+                        Spacer()
+                        Rectangle()
+                            .fill(NeoTokyo.neonCyan.opacity(0.35))
+                            .frame(width: 16, height: 1.5)
+                            .clipShape(Capsule())
+                            .padding(.bottom, 6)
+                    }
                 }
 
-                // Day number
+                // Day number + selection dot
                 VStack(spacing: 2) {
                     Text("\(dayNumber)")
                         .font(.system(size: 16, weight: isSelected ? .black : .semibold, design: .monospaced))
-                        .foregroundColor(dayColor(isSelected: isSelected, isWeekend: isWeekend, isToday: isToday))
+                        .foregroundColor(dayColor(isSelected: isSelected, isWeekend: isWeekend))
 
-                    // Selection dot
                     if isSelected {
                         Circle()
                             .fill(isWeekend ? NeoTokyo.laserGold : NeoTokyo.neonCyan)
@@ -203,6 +205,7 @@ struct GlassCalendarView: View {
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .onHover { hov in
             withAnimation(.easeOut(duration: 0.12)) { hoveredDate = hov ? date : nil }
         }
@@ -220,9 +223,8 @@ struct GlassCalendarView: View {
         return AnyShapeStyle(Color.white.opacity(0.01))
     }
 
-    private func dayColor(isSelected: Bool, isWeekend: Bool, isToday: Bool) -> Color {
+    private func dayColor(isSelected: Bool, isWeekend: Bool) -> Color {
         if isSelected { return isWeekend ? NeoTokyo.laserGold : NeoTokyo.neonCyan }
-        if isToday { return NeoTokyo.terminalGreen }
         if isWeekend { return NeoTokyo.laserRed.opacity(0.45) }
         return .white.opacity(0.6)
     }
@@ -231,26 +233,26 @@ struct GlassCalendarView: View {
 
     private var selectionBadge: some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark.diamond.fill")
-                .font(.system(size: 11))
-                .foregroundColor(NeoTokyo.neonCyan)
-
+            Text("[")
+                .foregroundColor(NeoTokyo.neonCyan.opacity(0.3))
+            +
             Text("\(viewModel.selectedDates.count)")
-                .font(.system(size: 14, weight: .black, design: .monospaced))
                 .foregroundColor(NeoTokyo.neonCyan)
+            +
+            Text("]")
+                .foregroundColor(NeoTokyo.neonCyan.opacity(0.3))
 
             Text(viewModel.selectedDates.count > 1 ? "DAYS SELECTED" : "DAY SELECTED")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(.white.opacity(0.35))
-                .tracking(1.5)
         }
+        .font(.system(size: 10, weight: .bold, design: .monospaced))
+        .tracking(1.5)
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
         .background(
             Capsule()
                 .fill(NeoTokyo.neonCyan.opacity(0.04))
                 .overlay(Capsule().strokeBorder(NeoTokyo.neonCyan.opacity(0.12), lineWidth: 0.5))
-                .shadow(color: NeoTokyo.neonCyan.opacity(0.06), radius: 10)
         )
     }
 }
