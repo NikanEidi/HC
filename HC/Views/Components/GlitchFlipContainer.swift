@@ -2,165 +2,124 @@
 //  GlitchFlipContainer.swift
 //  HC
 //
-//  3D glitch/shatter transition between two views.
-//  Replaces a standard flip with chromatic aberration + noise artifacts.
+//  3D glitch/shatter transition engine. Drives a three-phase animation:
+//  Phase 1 — Pre-distortion builds (chromatic split + noise).
+//  Phase 2 — The flip (rotation + peak glitch artifacts).
+//  Phase 3 — Settle (distortion fades to zero).
 //
 
 import SwiftUI
 
+/// Generic container that flips between a front and back view
+/// using a custom chromatic-aberration glitch effect.
 struct GlitchFlipContainer<Front: View, Back: View>: View {
+
     @Binding var isFlipped: Bool
     let front: () -> Front
     let back: () -> Back
 
     @State private var rotation: Double = 0
-    @State private var glitchIntensity: CGFloat = 0
-    @State private var noiseOpacity: CGFloat = 0
-    @State private var rgbSplit: CGFloat = 0
-    @State private var shatterOffsets: [CGSize] = Array(repeating: .zero, count: 6)
-    @State private var sliceOpacity: [CGFloat] = Array(repeating: 1, count: 6)
+    @State private var glitch: CGFloat = 0
+    @State private var noise: CGFloat = 0
+    @State private var split: CGFloat = 0
+    @State private var offsets: [CGSize] = Array(repeating: .zero, count: 8)
+    @State private var sliceAlpha: [CGFloat] = Array(repeating: 1, count: 8)
 
-    private let duration: Double = 0.6
+    private let dur: Double = 0.55
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
 
     var body: some View {
         ZStack {
-            // ── Content Layer ──
             ZStack {
-                // Front
-                front()
-                    .opacity(rotation < 90 ? 1 : 0)
-
-                // Back (pre-flipped so it reads correctly)
-                back()
-                    .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
+                front().opacity(rotation < 90 ? 1 : 0)
+                back().rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
                     .opacity(rotation >= 90 ? 1 : 0)
             }
-            .rotation3DEffect(
-                .degrees(rotation),
-                axis: (x: 0.05 * glitchIntensity, y: 1, z: 0.02 * glitchIntensity),
-                perspective: 0.4
-            )
+            .rotation3DEffect(.degrees(rotation),
+                              axis: (x: 0.04 * glitch, y: 1, z: 0.015 * glitch),
+                              perspective: 0.35)
 
-            // ── Glitch Artifacts ──
-            if glitchIntensity > 0 {
-                glitchOverlay
-            }
+            if glitch > 0 { artifacts }
         }
-        .onChange(of: isFlipped) { _, newValue in
-            triggerGlitchFlip(to: newValue)
-        }
+        .onChange(of: isFlipped) { _, val in flip(to: val) }
     }
 
-    // MARK: - Glitch Overlay
+    // MARK: - Glitch Artifacts
 
-    private var glitchOverlay: some View {
+    private var artifacts: some View {
         ZStack {
-            // RGB chromatic split
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(NeoTokyo.neonCyan.opacity(0.1 * glitchIntensity))
-                .offset(x: rgbSplit, y: -rgbSplit * 0.5)
-                .blendMode(.screen)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Forge.cipher.opacity(0.08 * glitch))
+                .offset(x: split, y: -split * 0.4).blendMode(.screen)
 
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(NeoTokyo.laserRed.opacity(0.08 * glitchIntensity))
-                .offset(x: -rgbSplit, y: rgbSplit * 0.3)
-                .blendMode(.screen)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Forge.crimson.opacity(0.06 * glitch))
+                .offset(x: -split, y: split * 0.25).blendMode(.screen)
 
-            // Horizontal glitch slices
             VStack(spacing: 0) {
-                ForEach(0..<6, id: \.self) { i in
-                    Rectangle()
-                        .fill(Color.white.opacity(0.04 * sliceOpacity[i]))
-                        .frame(height: 12)
-                        .offset(shatterOffsets[i])
-                        .opacity(Double(sliceOpacity[i]))
+                ForEach(0..<8, id: \.self) { i in
+                    Rectangle().fill(Color.white.opacity(0.03 * sliceAlpha[i]))
+                        .frame(height: 10).offset(offsets[i]).opacity(Double(sliceAlpha[i]))
                 }
-            }
-            .blendMode(.overlay)
+            }.blendMode(.overlay)
 
-            // Noise scanlines
-            VStack(spacing: 2) {
-                ForEach(0..<30, id: \.self) { _ in
-                    Rectangle()
-                        .fill(Color.white.opacity(Double.random(in: 0...0.06) * Double(noiseOpacity)))
-                        .frame(height: CGFloat.random(in: 1...3))
+            VStack(spacing: 1.5) {
+                ForEach(0..<40, id: \.self) { _ in
+                    Rectangle().fill(Color.white.opacity(Double.random(in: 0...0.05) * Double(noise)))
+                        .frame(height: CGFloat.random(in: 0.5...2.5))
                 }
-            }
-            .blendMode(.overlay)
+            }.blendMode(.overlay)
         }
         .allowsHitTesting(false)
     }
 
-    // MARK: - Animation Sequence
+    // MARK: - Three-Phase Flip
 
-    private func triggerGlitchFlip(to flipped: Bool) {
+    private func flip(to flipped: Bool) {
         haptic.prepare()
 
-        // Phase 1: Pre-glitch (distortion builds)
-        withAnimation(.easeIn(duration: duration * 0.2)) {
-            glitchIntensity = 1.0
-            rgbSplit = CGFloat.random(in: 6...14)
-            noiseOpacity = 0.8
-            randomizeShatter()
+        withAnimation(.easeIn(duration: dur * 0.18)) {
+            glitch = 1; split = CGFloat.random(in: 5...12); noise = 0.85; scatter()
         }
 
-        // Phase 2: The flip + peak glitch
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration * 0.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + dur * 0.18) {
             haptic.impactOccurred(intensity: 1.0)
-
-            withAnimation(.easeInOut(duration: duration * 0.5)) {
+            withAnimation(.easeInOut(duration: dur * 0.45)) {
                 rotation = flipped ? 180 : 0
-                rgbSplit = CGFloat.random(in: -18...18)
-                randomizeShatter()
+                split = CGFloat.random(in: -16...16); scatter()
             }
         }
 
-        // Phase 3: Settle — glitch fades
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration * 0.7) {
-            withAnimation(.easeOut(duration: duration * 0.3)) {
-                glitchIntensity = 0
-                rgbSplit = 0
-                noiseOpacity = 0
-                shatterOffsets = Array(repeating: .zero, count: 6)
-                sliceOpacity = Array(repeating: 1, count: 6)
+        DispatchQueue.main.asyncAfter(deadline: .now() + dur * 0.65) {
+            withAnimation(.easeOut(duration: dur * 0.35)) {
+                glitch = 0; split = 0; noise = 0
+                offsets = Array(repeating: .zero, count: 8)
+                sliceAlpha = Array(repeating: 1, count: 8)
             }
         }
     }
 
-    private func randomizeShatter() {
-        for i in 0..<6 {
-            shatterOffsets[i] = CGSize(
-                width: CGFloat.random(in: -20...20),
-                height: CGFloat.random(in: -4...4)
-            )
-            sliceOpacity[i] = CGFloat.random(in: 0.3...1.0)
+    private func scatter() {
+        for i in 0..<8 {
+            offsets[i] = CGSize(width: .random(in: -22...22), height: .random(in: -3...3))
+            sliceAlpha[i] = .random(in: 0.25...1.0)
         }
     }
 }
 
 #Preview {
     @Previewable @State var flipped = false
-
     ZStack {
-        NeoTokyo.vantablack.ignoresSafeArea()
-
+        Forge.obsidian.ignoresSafeArea()
         VStack(spacing: 30) {
             GlitchFlipContainer(isFlipped: $flipped) {
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(NeoTokyo.neonPurple.opacity(0.3))
-                    .frame(width: 320, height: 400)
-                    .overlay(Text("FRONT").foregroundColor(.white))
+                RoundedRectangle(cornerRadius: 22).fill(Forge.arcane.opacity(0.3))
+                    .frame(width: 320, height: 400).overlay(Text("FRONT").foregroundColor(.white))
             } back: {
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(NeoTokyo.neonCyan.opacity(0.3))
-                    .frame(width: 320, height: 400)
-                    .overlay(Text("BACK").foregroundColor(.white))
+                RoundedRectangle(cornerRadius: 22).fill(Forge.cipher.opacity(0.3))
+                    .frame(width: 320, height: 400).overlay(Text("BACK").foregroundColor(.white))
             }
-
-            Button("FLIP") { flipped.toggle() }
-                .foregroundColor(NeoTokyo.neonCyan)
+            Button("FLIP") { flipped.toggle() }.foregroundColor(Forge.cipher)
         }
-    }
-    .preferredColorScheme(.dark)
+    }.preferredColorScheme(.dark)
 }
