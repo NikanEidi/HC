@@ -1,7 +1,7 @@
 # HC -- Midnight Forge Dragon Terminal
 
 > A cyberpunk-themed iPadOS work hour tracker built with SwiftUI and MVVM.
-> Featuring the **Forge** design system, detailed ASCII dragon art,
+> Featuring the **Forge** design system, classic ASCII dragon art,
 > ANSI-styled terminal output, glassmorphism UI, glitch transitions,
 > and full Apple Pencil support.
 
@@ -24,6 +24,17 @@ The interface is split into two panels:
   and a timesheet with chromatic aberration + shatter effects.
 - **Right**: A live ANSI-styled terminal with ASCII dragon header,
   system boot sequence, and real-time session data.
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | MVVM data flow, file map, design decisions |
+| [Design System](docs/DESIGN_SYSTEM.md) | Forge palette, GlassCard, typography, spacing |
+| [Components](docs/COMPONENTS.md) | Every SwiftUI component documented in detail |
+| [Setup](docs/SETUP.md) | Requirements, build instructions, usage guide |
 
 ---
 
@@ -52,11 +63,56 @@ The interface is split into two panels:
 - **Glass Calendar** -- Multi-date selection with crimson/ember weekends and arcane/cipher weekday highlights
 - **Custom Time Sliders** -- Frictionless neon sliders with haptic 15-min snap, triple-gradient track, glowing thumb
 - **Glitch Flip** -- 3D chromatic aberration + 8-slice shatter effect (0.55s, 3 phases)
-- **Dragon Terminal** -- Live ANSI output with ASCII dragon, line numbers, 5-module boot sequence, status bar
+- **Dragon Terminal** -- Live ANSI output with classic ASCII dragon, line numbers, 5-module boot sequence, status bar
 - **Clipboard Export** -- One-tap formatted report with success haptic
 - **Apple Pencil** -- `.hoverEffect(.lift)` on buttons, `.hoverEffect(.highlight)` on calendar cells, pencil drag on sliders
 - **CRT Scanlines** -- Animated phosphor sweep beam with perspective grid floor
 - **Breathing Aurora** -- 3 color orbs with 6-second animation cycle
+
+---
+
+## Terminal Preview
+
+```
+                            _===~_  _~===_
+                      _--^^#####//     \#####^^--_
+                   _-^##########// ( ) \##########^-_
+                  -############// |\^^/| \############-
+                _/############//  (o::o)  \############\_
+               /#############((    \//    ))#############\
+              -###############\\  (    )  //###############-
+             -#################\\ / VV \ //#################-
+            -###################\\/    \\//###################-
+           _#/|##########/\######(  /\  )######/\##########|\#_
+          |/  |#/\#/\#/\  \#/\##\ |  | /##/\#/ /\#/\#/\#|  \|
+          `   |/  V  V `   V \#\| |  | |/#/ V  ` V  V  \|   `
+              `   `  `      ` / | |  | | \ `     `  `   `
+                              (  | |  | |  )
+                             __\ | |  | | /__
+                            (vvv(VVV)(VVV)vvv)
+
+  [SYS] Midnight Forge v2.0 -- 2026-06-08 14:00:00
+  [SYS] Calendar engine ............. [OK]
+  [SYS] Haptic subsystem ............ [OK]
+  [SYS] Clipboard bridge ............ [OK]
+  [SYS] Pencil input ................ [OK]
+  [SYS] Glitch renderer ............. [OK]
+
+  +================================================+
+  |            WORK SESSION REPORT                  |
+  +================================================+
+
+  [WD] [01] 8 Jun: 07:00 --> 16:00
+        Hour: 9:00
+  [WE] [02] 9 Jun: 04:30 --> 14:30
+        Hour: 10:00
+
+  +------------------------------------------------+
+  | >>> Total Hours: 19:00
+  +------------------------------------------------+
+
+root@hc:~$ _
+```
 
 ---
 
@@ -87,49 +143,12 @@ HC/
 
 ---
 
-## Terminal Preview
-
-```
-                 \                    /
-      _    /\     \\               / /    /\
-     / \  / /\     \\             / /    / /\
-    /   \/ /  \     \\           / /    /  \ \
-   / /\  /    _\    \\         / /    _/   /\ \
-  / /  \/ /\ / /     \\       / /    / /\ /  \ \
- / /   /  / / /       \\     / /    / / / \   \ \
-/ /   / _/ / /         \\___/ /    / / /   \   \ \
-
-  [SYS] Midnight Forge v2.0 -- 2026-06-08 13:45:00
-  [SYS] Calendar engine ............. [OK]
-  [SYS] Haptic subsystem ............ [OK]
-  [SYS] Clipboard bridge ............ [OK]
-  [SYS] Pencil input ................ [OK]
-  [SYS] Glitch renderer ............. [OK]
-
-  +================================================+
-  |            WORK SESSION REPORT                  |
-  +================================================+
-
-  [WD] [01] 8 Jun: 7:00 --> 16:00
-        Hour: 9:00
-  [WE] [02] 9 Jun: 4:30 --> 14:30
-        Hour: 10:00
-
-  +------------------------------------------------+
-  | >>> Total Hours: 19:00
-  +------------------------------------------------+
-
-root@hc:~$ _
-```
-
----
-
 ## Clipboard Output Format
 
 ```
-8 Jun: 7:00 to 16:00
+8 Jun: 07:00 to 16:00
 Hour: 9:00
-9 Jun: 4:30 to 14:30
+9 Jun: 04:30 to 14:30
 Hour: 10:00
 Total Hours: 19:00
 ```
