@@ -2,266 +2,174 @@
 //  GlassCalendarView.swift
 //  HC
 //
-//  Front card — Premium Neo-Tokyo glass calendar.
-//  Weekends: Laser Red/Gold. Weekdays: Neon Purple/Cyan.
-//  Apple Pencil hover support, no emoji.
+//  Front card — Premium glass calendar with Forge palette.
+//  Weekends glow Ember/Crimson. Weekday selections glow Arcane/Cipher.
+//  Apple Pencil hover on every interactive element.
 //
 
 import SwiftUI
 
+/// The front face of the flip card. Renders a month-view calendar grid
+/// with multi-select capability, weekend/weekday color coding, and
+/// animated micro-interactions.
 struct GlassCalendarView: View {
-    @Bindable var viewModel: TrackerViewModel
-    @State private var hoveredDate: Date? = nil
-    @State private var headerGlow: CGFloat = 0
 
-    private let weekdayHeaders = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 5), count: 7)
+    @Bindable var viewModel: TrackerViewModel
+    @State private var hovered: Date? = nil
+    @State private var pulse: CGFloat = 0
+
+    private let headers = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+    private let grid = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
 
     var body: some View {
         VStack(spacing: 0) {
-            calendarHeader
-                .padding(.horizontal, 22)
-                .padding(.top, 22)
-                .padding(.bottom, 14)
-
-            weekdayRow
-                .padding(.horizontal, 18)
-                .padding(.bottom, 10)
-
-            Rectangle()
-                .fill(
-                    LinearGradient(
-                        colors: [NeoTokyo.neonPurple.opacity(0.0), NeoTokyo.neonCyan.opacity(0.15), NeoTokyo.neonPurple.opacity(0.0)],
-                        startPoint: .leading, endPoint: .trailing
-                    )
-                )
-                .frame(height: 0.5)
-                .padding(.horizontal, 22)
-
-            LazyVGrid(columns: columns, spacing: 7) {
-                ForEach(Array(viewModel.daysInMonth.enumerated()), id: \.offset) { _, date in
-                    if let date = date {
-                        dayCell(for: date)
-                    } else {
-                        Color.clear.frame(height: 52)
-                    }
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 14)
-            .padding(.bottom, 18)
-
-            if !viewModel.selectedDates.isEmpty {
-                selectionBadge
-                    .padding(.bottom, 18)
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.8).combined(with: .opacity),
-                        removal: .opacity
-                    ))
-            }
+            navigation.padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 16)
+            weekRow.padding(.horizontal, 20).padding(.bottom, 10)
+            dividerLine.padding(.horizontal, 24)
+            dayGrid.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 20)
+            if !viewModel.selectedDates.isEmpty { badge.padding(.bottom, 20) }
         }
-        .glassCard(cornerRadius: 26, glowColor: NeoTokyo.neonPurple)
+        .glassCard(radius: 24, glow: Forge.arcane)
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: viewModel.selectedDates.count)
         .onAppear {
-            withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
-                headerGlow = 1
-            }
+            withAnimation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true)) { pulse = 1 }
         }
     }
 
-    // MARK: - Calendar Header
+    // MARK: - Navigation
 
-    private var calendarHeader: some View {
+    private var navigation: some View {
         HStack {
-            Button(action: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                viewModel.previousMonth()
-            }) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 13, weight: .black))
-                    .foregroundColor(NeoTokyo.neonCyan)
-                    .frame(width: 40, height: 40)
-                    .background(
-                        Circle()
-                            .fill(NeoTokyo.neonCyan.opacity(0.06))
-                            .overlay(Circle().strokeBorder(NeoTokyo.neonCyan.opacity(0.12), lineWidth: 0.5))
-                    )
-                    .hoverEffect(.lift)
-            }
-
+            navButton(icon: "chevron.left") { viewModel.previousMonth() }
             Spacer()
-
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 Text(viewModel.monthYearString.uppercased())
-                    .font(.system(size: 16, weight: .black, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.9))
-                    .tracking(4)
-                    .shadow(color: NeoTokyo.neonCyan.opacity(0.3 + headerGlow * 0.2), radius: 8)
-
-                Rectangle()
-                    .fill(
-                        LinearGradient(
-                            colors: [NeoTokyo.neonPurple.opacity(0.0), NeoTokyo.neonCyan.opacity(0.4 + headerGlow * 0.3), NeoTokyo.neonPurple.opacity(0.0)],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                    )
-                    .frame(width: 100, height: 1)
+                    .font(.system(size: 15, weight: .black, design: .monospaced))
+                    .foregroundColor(Forge.frost.opacity(0.9)).tracking(5)
+                    .shadow(color: Forge.cipher.opacity(0.25 + pulse * 0.2), radius: 10)
+                Capsule()
+                    .fill(LinearGradient(colors: [Forge.arcane.opacity(0.0), Forge.cipher.opacity(0.3 + pulse * 0.25), Forge.arcane.opacity(0.0)],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: 90, height: 1.5)
             }
-
             Spacer()
-
-            Button(action: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                viewModel.nextMonth()
-            }) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .black))
-                    .foregroundColor(NeoTokyo.neonCyan)
-                    .frame(width: 40, height: 40)
-                    .background(
-                        Circle()
-                            .fill(NeoTokyo.neonCyan.opacity(0.06))
-                            .overlay(Circle().strokeBorder(NeoTokyo.neonCyan.opacity(0.12), lineWidth: 0.5))
-                    )
-                    .hoverEffect(.lift)
-            }
+            navButton(icon: "chevron.right") { viewModel.nextMonth() }
         }
+    }
+
+    private func navButton(icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); action() }) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .black))
+                .foregroundColor(Forge.cipher)
+                .frame(width: 42, height: 42)
+                .background(Circle().fill(Forge.cipher.opacity(0.06))
+                    .overlay(Circle().strokeBorder(Forge.cipher.opacity(0.10), lineWidth: 0.5)))
+        }.hoverEffect(.lift)
     }
 
     // MARK: - Weekday Row
 
-    private var weekdayRow: some View {
+    private var weekRow: some View {
         HStack(spacing: 0) {
-            ForEach(weekdayHeaders, id: \.self) { day in
-                let isWknd = (day == "SAT" || day == "SUN")
-                Text(day)
-                    .font(.system(size: 10, weight: .black, design: .monospaced))
-                    .foregroundColor(isWknd ? NeoTokyo.laserRed.opacity(0.6) : .white.opacity(0.3))
-                    .tracking(1.5)
-                    .frame(maxWidth: .infinity)
+            ForEach(headers, id: \.self) { d in
+                Text(d)
+                    .font(.system(size: 9, weight: .black, design: .monospaced))
+                    .foregroundColor((d == "SAT" || d == "SUN") ? Forge.crimson.opacity(0.55) : Forge.steel.opacity(0.45))
+                    .tracking(1.8).frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    // MARK: - Day Grid
+
+    private var dayGrid: some View {
+        LazyVGrid(columns: grid, spacing: 7) {
+            ForEach(Array(viewModel.daysInMonth.enumerated()), id: \.offset) { _, date in
+                if let date { cell(date) } else { Color.clear.frame(height: 54) }
             }
         }
     }
 
     // MARK: - Day Cell
 
-    @ViewBuilder
-    private func dayCell(for date: Date) -> some View {
-        let isSelected = viewModel.isSelected(date)
-        let isWeekend = viewModel.isWeekend(date)
-        let isToday = Calendar.current.isDateInToday(date)
-        let isHovered = hoveredDate == date
-        let dayNumber = Calendar.current.component(.day, from: date)
+    @ViewBuilder private func cell(_ date: Date) -> some View {
+        let sel = viewModel.isSelected(date)
+        let wknd = viewModel.isWeekend(date)
+        let today = Calendar.current.isDateInToday(date)
+        let day = Calendar.current.component(.day, from: date)
 
-        Button(action: {
+        Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             viewModel.toggleDate(date)
-        }) {
+        } label: {
             ZStack {
-                // Background
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(cellBG(isSelected: isSelected, isWeekend: isWeekend, isHovered: isHovered))
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(sel ? (wknd ? Forge.crimson.opacity(0.12) : Forge.arcane.opacity(0.10))
+                          : (hovered == date ? Color.white.opacity(0.025) : Color.white.opacity(0.008)))
 
-                // Selection border with glow
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                if sel {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .strokeBorder(
-                            isWeekend
-                            ? LinearGradient(colors: [NeoTokyo.laserRed, NeoTokyo.laserGold], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            : LinearGradient(colors: [NeoTokyo.neonPurple, NeoTokyo.neonCyan], startPoint: .topLeading, endPoint: .bottomTrailing),
-                            lineWidth: 1.5
-                        )
-                        .shadow(color: isWeekend ? NeoTokyo.laserRed.opacity(0.35) : NeoTokyo.neonPurple.opacity(0.35), radius: 10)
+                            wknd ? LinearGradient(colors: [Forge.crimson, Forge.ember], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                 : LinearGradient(colors: [Forge.arcane, Forge.cipher], startPoint: .topLeading, endPoint: .bottomTrailing),
+                            lineWidth: 1.4)
+                        .shadow(color: (wknd ? Forge.crimson : Forge.arcane).opacity(0.30), radius: 10)
                 }
 
-                // Today: subtle thin bottom line, NOT green text
-                if isToday && !isSelected {
-                    VStack {
-                        Spacer()
-                        Rectangle()
-                            .fill(NeoTokyo.neonCyan.opacity(0.35))
-                            .frame(width: 16, height: 1.5)
-                            .clipShape(Capsule())
-                            .padding(.bottom, 6)
+                if today && !sel {
+                    VStack { Spacer()
+                        Capsule().fill(Forge.cipher.opacity(0.30)).frame(width: 14, height: 1.5).padding(.bottom, 7)
                     }
                 }
 
-                // Day number + selection dot
-                VStack(spacing: 2) {
-                    Text("\(dayNumber)")
-                        .font(.system(size: 16, weight: isSelected ? .black : .semibold, design: .monospaced))
-                        .foregroundColor(dayColor(isSelected: isSelected, isWeekend: isWeekend))
-
-                    if isSelected {
-                        Circle()
-                            .fill(isWeekend ? NeoTokyo.laserGold : NeoTokyo.neonCyan)
-                            .frame(width: 4, height: 4)
-                            .shadow(color: (isWeekend ? NeoTokyo.laserGold : NeoTokyo.neonCyan).opacity(0.6), radius: 3)
+                VStack(spacing: 3) {
+                    Text("\(day)")
+                        .font(.system(size: 16, weight: sel ? .black : .medium, design: .monospaced))
+                        .foregroundColor(sel ? (wknd ? Forge.ember : Forge.cipher) : (wknd ? Forge.crimson.opacity(0.40) : Forge.frost.opacity(0.55)))
+                    if sel {
+                        Circle().fill(wknd ? Forge.ember : Forge.cipher).frame(width: 4, height: 4)
+                            .shadow(color: (wknd ? Forge.ember : Forge.cipher).opacity(0.5), radius: 3)
                     }
                 }
             }
-            .frame(height: 52)
-            .scaleEffect(isSelected ? 1.02 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
+            .frame(height: 54)
+            .scaleEffect(sel ? 1.03 : 1.0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.7), value: sel)
         }
-        .buttonStyle(.plain)
-        .hoverEffect(.highlight)
-        .onHover { hov in
-            withAnimation(.easeOut(duration: 0.12)) { hoveredDate = hov ? date : nil }
-        }
+        .buttonStyle(.plain).hoverEffect(.highlight)
+        .onHover { h in withAnimation(.easeOut(duration: 0.1)) { hovered = h ? date : nil } }
     }
 
-    // MARK: - Helpers
+    // MARK: - Divider
 
-    private func cellBG(isSelected: Bool, isWeekend: Bool, isHovered: Bool) -> some ShapeStyle {
-        if isSelected {
-            return AnyShapeStyle(isWeekend ? NeoTokyo.laserRed.opacity(0.14) : NeoTokyo.neonPurple.opacity(0.12))
-        }
-        if isHovered {
-            return AnyShapeStyle(Color.white.opacity(0.035))
-        }
-        return AnyShapeStyle(Color.white.opacity(0.01))
+    private var dividerLine: some View {
+        Rectangle()
+            .fill(LinearGradient(colors: [Forge.arcane.opacity(0.0), Forge.cipher.opacity(0.12), Forge.arcane.opacity(0.0)],
+                                  startPoint: .leading, endPoint: .trailing))
+            .frame(height: 0.5)
     }
 
-    private func dayColor(isSelected: Bool, isWeekend: Bool) -> Color {
-        if isSelected { return isWeekend ? NeoTokyo.laserGold : NeoTokyo.neonCyan }
-        if isWeekend { return NeoTokyo.laserRed.opacity(0.45) }
-        return .white.opacity(0.6)
-    }
+    // MARK: - Badge
 
-    // MARK: - Selection Badge
-
-    private var selectionBadge: some View {
-        HStack(spacing: 8) {
-            Text("[")
-                .foregroundColor(NeoTokyo.neonCyan.opacity(0.3))
-            +
-            Text("\(viewModel.selectedDates.count)")
-                .foregroundColor(NeoTokyo.neonCyan)
-            +
-            Text("]")
-                .foregroundColor(NeoTokyo.neonCyan.opacity(0.3))
-
-            Text(viewModel.selectedDates.count > 1 ? "DAYS SELECTED" : "DAY SELECTED")
-                .foregroundColor(.white.opacity(0.35))
+    private var badge: some View {
+        HStack(spacing: 6) {
+            (Text("[").foregroundColor(Forge.cipher.opacity(0.3))
+             + Text("\(viewModel.selectedDates.count)").foregroundColor(Forge.cipher)
+             + Text("]").foregroundColor(Forge.cipher.opacity(0.3)))
+            Text(viewModel.selectedDates.count > 1 ? "DAYS" : "DAY")
+                .foregroundColor(Forge.steel.opacity(0.5))
         }
-        .font(.system(size: 10, weight: .bold, design: .monospaced))
-        .tracking(1.5)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
+        .font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(1.5)
+        .padding(.horizontal, 18).padding(.vertical, 8)
         .background(
-            Capsule()
-                .fill(NeoTokyo.neonCyan.opacity(0.04))
-                .overlay(Capsule().strokeBorder(NeoTokyo.neonCyan.opacity(0.12), lineWidth: 0.5))
-        )
+            Capsule().fill(Forge.cipher.opacity(0.03))
+                .overlay(Capsule().strokeBorder(Forge.cipher.opacity(0.08), lineWidth: 0.5)))
+        .transition(.asymmetric(insertion: .scale(scale: 0.85).combined(with: .opacity), removal: .opacity))
     }
 }
 
 #Preview {
-    ZStack {
-        GlassmorphismBG()
-        GlassCalendarView(viewModel: TrackerViewModel())
-            .frame(width: 420).padding()
-    }
-    .preferredColorScheme(.dark)
+    ZStack { GlassmorphismBG(); GlassCalendarView(viewModel: TrackerViewModel()).frame(width: 440).padding() }
+        .preferredColorScheme(.dark)
 }
