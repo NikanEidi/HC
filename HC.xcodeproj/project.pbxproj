@@ -256,6 +256,7 @@
 				DEVELOPMENT_TEAM = C7AJS48K8D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "HC uses the front camera as a silent motion sensor for air-gesture control of the Neo-Tokyo Data Terminal. No video is recorded or stored.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -288,6 +289,7 @@
 				DEVELOPMENT_TEAM = C7AJS48K8D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "HC uses the front camera as a silent motion sensor for air-gesture control of the Neo-Tokyo Data Terminal. No video is recorded or stored.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
