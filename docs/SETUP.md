@@ -7,6 +7,21 @@
 - **Swift** 6.0
 - **macOS** Sonoma 14.0+ (for Xcode 16)
 - **Device**: iPad recommended (optimized for landscape)
+- **Camera**: Front-facing camera required for hand gesture control
+
+---
+
+## Permissions
+
+HC requires the following entitlements and `Info.plist` entries:
+
+| Key | Value | Required For |
+|-----|-------|--------------|
+| `NSCameraUsageDescription` | "HC uses the front camera to track hand gestures for touchless control." | Hand gesture engine |
+
+> **Note:** The camera is used exclusively for on-device hand gesture
+> processing via Apple's Vision framework. No images or video are stored,
+> transmitted, or recorded. All processing happens locally in real-time.
 
 ---
 
@@ -26,6 +41,9 @@ open HC.xcodeproj
 3. Press **Cmd+R** to build and run
 4. The app launches directly into `TrackerHomeView`
 
+> **Note:** Hand gesture control requires a physical iPad with a
+> front-facing camera. The gesture engine is unavailable in Simulator.
+
 ---
 
 ## Project Structure
@@ -35,15 +53,32 @@ HC/
 |-- HC.xcodeproj           # Xcode project configuration
 |-- HC/                    # Source code
 |   |-- APP/               # App entry point
+|   |   +-- HCApp.swift
 |   |-- Models/            # Data models
+|   |   +-- WorkSession.swift
 |   |-- ViewModels/        # @Observable ViewModels
+|   |   +-- TrackerViewModel.swift
 |   |-- Views/             # SwiftUI views
-|   |   |-- Calendar/      # Calendar card
-|   |   |-- Components/    # Shared components
-|   |   |-- Main/          # Root view
-|   |   +-- Timesheet/     # Timesheet card
+|   |   |-- Calendar/
+|   |   |   +-- GlassCalendarView.swift
+|   |   |-- Components/
+|   |   |   |-- GlassmorphismBG.swift
+|   |   |   |-- GlitchFlipContainer.swift
+|   |   |   +-- NeonTimeSlider.swift
+|   |   |-- Main/
+|   |   |   +-- TrackerHomeView.swift
+|   |   +-- Timesheet/
+|   |       |-- TimeInputTableView.swift
+|   |       +-- TimesheetPreferenceKeys.swift
 |   +-- Utils/             # Utilities
+|       |-- ClipboardManager.swift
+|       +-- HandGestureManager.swift
+|-- Demo/                  # Demo assets
 |-- docs/                  # Documentation
+|   |-- ARCHITECTURE.md
+|   |-- COMPONENTS.md
+|   |-- DESIGN_SYSTEM.md
+|   +-- SETUP.md
 |-- README.md              # Project overview
 +-- .gitignore             # Git ignore rules
 ```
@@ -72,6 +107,7 @@ xcodebuild -project HC.xcodeproj -scheme HC clean build
 3. You may need to trust the developer certificate on your iPad:
    **Settings > General > Device Management > Developer App**
 4. Press **Cmd+R** to build and deploy
+5. Grant camera permission when prompted (required for gesture control)
 
 ---
 
@@ -94,6 +130,18 @@ xcodebuild -project HC.xcodeproj -scheme HC clean build
 2. The formatted report is copied to your clipboard
 3. A toast confirms: "[OK] EXPORTED TO CLIPBOARD"
 4. Paste anywhere (Notes, Messages, Email, etc.)
+
+### Hand Gesture Control
+1. Ensure the front-facing camera has a clear view of your hand
+2. Raise your hand in front of the iPad -- a cyberpunk cursor appears
+3. Move your **index finger** to navigate the cursor across the screen
+4. **Pinch** (thumb + index finger) to tap/click UI elements
+5. **Rotate your wrist** to flip between Calendar and Timesheet
+6. **Swipe** left/right to navigate calendar months
+7. The cursor disappears automatically when your hand leaves the frame
+
+> **Tip:** The One-Euro adaptive filter ensures smooth cursor tracking --
+> slow movements are heavily stabilized while fast gestures remain responsive.
 
 ### Terminal Panel
 - The right panel shows a live ANSI-styled terminal
@@ -122,3 +170,4 @@ Tags follow semantic versioning:
 - **v2.0** -- Midnight Forge palette overhaul
 - **v2.1** -- Dragon art fix + time alignment
 - **v2.2** -- Documentation + final dragon art
+- **v3.0** -- Hand gesture control, ultra-detailed 30-row dragon blueprint, gesture cursor overlay, PreferenceKey hit-testing system, One-Euro adaptive filter

@@ -8,8 +8,8 @@ Detailed documentation for every SwiftUI component in HC.
 
 **File:** `Views/Components/GlassmorphismBG.swift`
 
-Full-screen background with 5 composited visual layers and the
-`Forge` color palette definition.
+Full-screen background with 6 composited visual layers, the
+`Forge` color palette definition, and the `DragonArtRenderer`.
 
 **State:**
 - `breathe: CGFloat` -- Aurora orb animation phase (0 to 1)
@@ -18,9 +18,45 @@ Full-screen background with 5 composited visual layers and the
 **Sub-views:**
 - `perspectiveGrid` -- Canvas with vanishing point grid lines
 - `auroraOrbs` -- Canvas with 3 radial gradient orbs
-- `dragonWatermark` -- VStack of Text views forming ASCII dragon
+- `dragonWatermark` -- DragonArtRenderer output (ultra-detailed 30-row blueprint)
 - `scanlines` -- Canvas with horizontal lines + sweep beam
 - `vignette` -- RadialGradient darkening edges
+
+---
+
+## DragonArtRenderer
+
+**File:** `Views/Components/GlassmorphismBG.swift`
+
+Renders the ultra-detailed 30-row ASCII dragon blueprint with
+per-character color mapping and animated visual effects.
+
+**Character Classes (15+):**
+Each character in the dragon art is classified and colored independently:
+
+| Character | Class | Color |
+|-----------|-------|-------|
+| `#` | Body | Forge.arcane gradient |
+| `*` | Sparkle | Animated pulse (frost/cipher) |
+| `~` | Flame | Ember/crimson gradient |
+| `^` | Horn | Forge.supernova |
+| `o` | Eye | Forge.crimson (glow) |
+| `/` `\` | Wing edge | Forge.cipher |
+| `(` `)` | Contour | Forge.steel |
+| `V` | Teeth/claw | Forge.frost |
+| `=` | Scale | Forge.jade |
+| `-` | Outline | Forge.ash |
+| `_` | Base | Forge.phantom |
+| `.` | Dot | Forge.steel (dim) |
+| `+` | Joint | Forge.mint |
+| `v` | Tail | Forge.arcane (dim) |
+| ` ` | Space | Transparent |
+
+**Features:**
+- Flame breath particles with animated opacity cycling
+- Sparkle particles with randomized phase offsets
+- Per-character `foregroundColor` mapping via character classification
+- Animated phase parameter drives sparkle/flame pulse effects
 
 ---
 
@@ -98,6 +134,10 @@ Custom drag slider for time input (0-1440 minutes from midnight).
 - Active fill: Triple gradient (30% to 100% accent)
 - Thumb: RadialGradient (frost center to accent edge)
 
+**Frame Reporting:**
+- Reports slider frame via `SliderFramesKey` (`SliderFrameInfo`)
+- Enables `GestureCursorOverlay` to detect gesture hover/drag on sliders
+
 ---
 
 ## GlassCalendarView
@@ -107,7 +147,7 @@ Custom drag slider for time input (0-1440 minutes from midnight).
 Month-view calendar grid with multi-date selection.
 
 **State:**
-- `hovered: Date?` -- Currently pencil-hovered date
+- `hovered: Date?` -- Currently pencil-hovered or gesture-hovered date
 - `pulse: CGFloat` -- Header glow animation phase
 
 **Layout:**
@@ -123,6 +163,11 @@ Month-view calendar grid with multi-date selection.
 - **Selected weekend**: crimson/ember gradient border + ember dot
 - **Today (unselected)**: subtle cyan capsule underline
 - **Hovered**: white at 2.5% background
+
+**Frame Reporting:**
+- Reports grid bounds via `CalendarGridFrameKey`
+- Reports individual tappable cells via `TappableFramesKey`
+- Gesture hover glow responds to `GestureCursorOverlay` position
 
 ---
 
@@ -146,6 +191,110 @@ Scrollable list of work sessions with inline time sliders.
 - FROM slider: cipher accent
 - TO slider: arcane accent
 
+**Frame Reporting:**
+- Reports COPY button frame via `CopyButtonFrameKey`
+- Enables gesture-based copy activation via `GestureCursorOverlay`
+
+---
+
+## TimesheetPreferenceKeys
+
+**File:** `Views/Timesheet/TimesheetPreferenceKeys.swift`
+
+PreferenceKey definitions enabling cross-view frame reporting
+for the gesture hit-testing system.
+
+**PreferenceKey Types:**
+
+| Key | Value Type | Purpose |
+|-----|-----------|---------|
+| `CalendarGridFrameKey` | `CGRect` | Reports calendar grid bounds for gesture targeting |
+| `CopyButtonFrameKey` | `CGRect` | Reports copy button bounds for gesture click |
+| `SliderFramesKey` | `[SliderFrameInfo]` | Reports slider thumb frames for gesture drag |
+| `TappableFramesKey` | `[TappableElement]` | Reports generic tappable regions (buttons, cells) |
+
+**Support Types:**
+- `SliderFrameInfo` -- Contains slider ID, frame rect, and axis orientation
+- `TappableElement` -- Contains element ID and frame rect for hit-testing
+
+**View Extension:**
+- `reportTappableFrame(id:)` -- Convenience modifier that wraps a view's
+  frame in a `TappableElement` and reports it via `TappableFramesKey`
+
+---
+
+## HandGestureManager
+
+**File:** `Utils/HandGestureManager.swift`
+
+Front-camera gesture engine (580 lines) powered by AVFoundation and
+Apple's Vision framework. Tracks hand position and recognizes gestures
+for touchless UI interaction.
+
+**State Properties:**
+- `indexFingerPosition: CGPoint` -- Filtered finger position in screen coords
+- `isPinching: Bool` -- Thumb-index pinch detected (click)
+- `isTracking: Bool` -- Hand currently visible in frame
+- `wristAngle: CGFloat` -- Current wrist rotation angle
+- `handDepth: CGFloat` -- Estimated hand distance (bounding box size)
+- `swipeDirection: SwipeDirection?` -- Detected swipe (.left, .right, .up, .down)
+
+**Gesture Types:**
+
+| Gesture | Detection Method | Threshold |
+|---------|-----------------|-----------|
+| Pinch (click) | Thumb tip ↔ index tip distance | < distance threshold |
+| Wrist rotation (flip) | Angle delta from `AngleSample` buffer | > rotation threshold |
+| Directional swipe | Index finger velocity + direction | > velocity threshold |
+| Hand depth (zoom) | Hand bounding box area relative to frame | Continuous |
+
+**One-Euro Filter Parameters:**
+- `OneEuroFilter` -- Single-axis adaptive low-pass filter
+- `OneEuroFilter2D` -- Dual-axis wrapper for 2D point smoothing
+- `minCutoff` -- Minimum cutoff frequency (smoothness at rest)
+- `beta` -- Speed coefficient (responsiveness during motion)
+- `dCutoff` -- Derivative cutoff frequency
+
+**Support Types:**
+- `FrameDelegate` -- `AVCaptureVideoDataOutputSampleBufferDelegate` implementation
+- `AngleSample` -- Timestamped wrist angle sample for rotation detection
+
+**Pipeline:**
+1. AVFoundation captures front-camera frames
+2. Vision framework processes `VNDetectHandPoseRequest`
+3. Hand landmarks extracted (21 joint points)
+4. Index finger tip position passed through `OneEuroFilter2D`
+5. Gesture recognizers evaluate pinch/swipe/rotation/depth
+6. Filtered state published for `GestureCursorOverlay` consumption
+
+---
+
+## GestureCursorOverlay
+
+**File:** `Views/Main/TrackerHomeView.swift`
+
+Overlay view within `TrackerHomeView` that renders the gesture cursor
+and performs hit-testing against reported UI element frames.
+
+**Cursor Rendering:**
+- Outer ring: 36pt circle, Forge.cipher stroke, 2pt width
+- Inner dot: 8pt filled circle, Forge.frost
+- Click ripple: Expanding circle animation on pinch detection
+- Crosshair: Horizontal + vertical lines through cursor center
+
+**Hit-Testing:**
+- Collects frames from all `PreferenceKey` types
+- Tests cursor position against `CalendarGridFrameKey` frames
+- Tests cursor position against `CopyButtonFrameKey` frame
+- Tests cursor position against `SliderFramesKey` frames
+- Tests cursor position against `TappableFramesKey` frames
+- Matched element receives hover glow / activation on pinch
+
+**State:**
+- Reads `HandGestureManager` position for cursor placement
+- Reads gesture events to trigger corresponding ViewModel actions
+- Animates cursor appearance (fade in/out based on hand tracking state)
+
 ---
 
 ## TrackerHomeView
@@ -159,18 +308,25 @@ Root composition view with asymmetric 2-panel layout.
 - Body: GlitchFlipContainer (Calendar / Timesheet)
 
 **Right Panel (remaining width):**
-- Title bar: Traffic lights + "DRAGON-TERMINAL v2.0" + LIVE indicator
+- Title bar: Traffic lights + "DRAGON-TERMINAL v3.0" + LIVE indicator
 - Status bar: SYS | SESS | HRS | UP (live uptime counter)
 - Body: Scrollable terminal with ASCII dragon header
 - Prompt: `root@hc:~$` with blinking cursor
 
 **Terminal Content:**
-1. Dragon ASCII art header (15 lines)
-2. System boot messages (5 modules, each with [OK] status)
+1. Dragon ASCII art header (ultra-detailed 30-row blueprint)
+2. System boot messages (6 modules, each with [OK] status)
 3. Work Session Report section (box-drawn borders)
 4. Per-session entries with [WD]/[WE] tags
 5. Total hours summary
 6. Blinking cursor prompt
+
+**Internal Types:**
+- `TLine` -- Terminal line model (content + type)
+- `TLineType` -- Line category enum for styling
+
+**Overlays:**
+- `GestureCursorOverlay` -- Gesture cursor + hit-testing layer
 
 **Timers:**
 - Cursor blink: 0.45s interval

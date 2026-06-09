@@ -76,20 +76,87 @@ The `.glassCard()` modifier creates a frosted glass surface:
 
 ## Background Composition
 
-The `GlassmorphismBG` view renders 5 composited layers:
+The `GlassmorphismBG` view renders 6 composited layers:
 
 | Layer | Name | Description |
 |-------|------|-------------|
 | L0 | Abyss | Solid `Forge.abyss` fill |
 | L1 | Grid | Perspective grid (28 vertical + 18 horizontal lines) |
 | L2 | Aurora | 3 breathing color orbs (arcane, cipher, ember) |
-| L3 | Dragon | Classic ASCII art dragon watermark |
+| L3 | Dragon | Ultra-detailed 30-row ASCII dragon blueprint via `DragonArtRenderer` |
 | L4 | Scanlines | CRT phosphor lines + sweeping beam |
 | L5 | Vignette | Radial gradient darkening edges |
 
 **Animation Timings:**
 - Aurora orbs: 6-second breathe cycle (easeInOut, autoreverses)
 - Scan beam: 10-second linear sweep (no autoreverse)
+
+---
+
+## Dragon Art (v3.0)
+
+The ASCII dragon has been upgraded to an **ultra-detailed 30-row blueprint**
+rendered by the `DragonArtRenderer`. Each character is individually classified
+and colored, producing a multi-chromatic dragon with animated effects.
+
+### Character-Class Color Mapping
+
+| Character | Class | Forge Color | Effect |
+|-----------|-------|-------------|--------|
+| `#` | Body | arcane | Gradient fill |
+| `*` | Sparkle | frost / cipher | Animated pulse |
+| `~` | Flame | ember / crimson | Breathing glow |
+| `^` | Horn | supernova | Static accent |
+| `o` | Eye | crimson | Glow halo |
+| `/` `\` | Wing edge | cipher | Directional shade |
+| `(` `)` | Contour | steel | Structural |
+| `V` | Teeth/claw | frost | Bright accent |
+| `=` | Scale | jade | Pattern fill |
+| `-` | Outline | ash | Dim structural |
+| `_` | Base | phantom | Ground shadow |
+| `.` | Dot | steel (dim) | Texture detail |
+| `+` | Joint | mint | Connection point |
+| `v` | Tail | arcane (dim) | Gradient trail |
+| ` ` | Space | -- | Transparent |
+
+### Animated Effects
+- **Flame breath**: Characters classified as `~` pulse between ember and
+  crimson with an opacity cycle driven by the animation phase parameter
+- **Sparkle particles**: Characters classified as `*` have randomized
+  phase offsets creating a twinkling effect across the dragon body
+- **Phase parameter**: A single `CGFloat` phase value (0 to 1) drives
+  all animated character effects with per-class timing offsets
+
+---
+
+## Gesture Cursor Design
+
+The gesture cursor rendered by `GestureCursorOverlay` follows the
+Forge design system's cyberpunk aesthetic:
+
+### Cursor Components
+
+| Element | Size | Style |
+|---------|------|-------|
+| Outer ring | 36pt diameter | Forge.cipher stroke, 2pt width |
+| Inner dot | 8pt diameter | Forge.frost filled circle |
+| Crosshair H | Full width | Forge.cipher at 15% opacity, 0.5pt |
+| Crosshair V | Full height | Forge.cipher at 15% opacity, 0.5pt |
+
+### Cursor States
+
+| State | Visual |
+|-------|--------|
+| Tracking (idle) | Outer ring + inner dot, steady |
+| Hover | Outer ring brightens, target element glows |
+| Click (pinch) | Expanding ripple circle (cipher, fading out) |
+| Lost tracking | Cursor fades out (0.3s easeOut) |
+
+### Click Ripple Animation
+- Trigger: Pinch gesture detected
+- Start: 36pt diameter, cipher at 60% opacity
+- End: 72pt diameter, cipher at 0% opacity
+- Duration: 0.35 seconds, easeOut curve
 
 ---
 
@@ -141,9 +208,16 @@ All text uses the system monospaced font at various weights:
 - `.hoverEffect(.highlight)`: Calendar day cells
 - `onHover`: Calendar cells (manual opacity change)
 
+### Hand Gesture Feedback
+- Cursor appears when hand enters camera frame
+- Hover glow on UI elements when cursor overlaps their frame
+- Click ripple animation on pinch gesture
+- Cursor fades when hand tracking is lost
+
 ### Animations
 - Selection scale: 1.03x with spring (0.22s response, 0.7 damping)
 - Toast appear: spring (0.3s response, 0.7 damping)
 - Toast dismiss: easeOut after 2s delay
 - Terminal scroll: easeOut (0.25s)
 - Cursor blink: 0.45s interval toggle
+- Gesture cursor ripple: easeOut (0.35s)
