@@ -25,6 +25,10 @@ struct NeonTimeSlider: View {
     /// Track and thumb accent color.
     var accent: Color = Forge.cipher
 
+    // Optional properties for geometry reporting
+    var sessionID: UUID? = nil
+    var isStartSlider: Bool = true
+
     // ── Configuration ──
     private let step = 15
     private let range = 0...1440
@@ -82,6 +86,7 @@ struct NeonTimeSlider: View {
                                              startPoint: .leading, endPoint: .trailing))
                         .frame(width: x, height: 4)
                         .shadow(color: accent.opacity(dragging ? 0.45 : 0.15), radius: dragging ? 14 : 5)
+                        .animation(.spring(response: 0.12, dampingFraction: 0.85), value: x)
 
                     // Thumb assembly
                     ZStack {
@@ -94,6 +99,7 @@ struct NeonTimeSlider: View {
                     }
                     .position(x: x, y: 2)
                     .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.7), value: dragging)
+                    .animation(.spring(response: 0.12, dampingFraction: 0.85), value: x)
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { v in
@@ -111,6 +117,12 @@ struct NeonTimeSlider: View {
                 .frame(height: 4)
             }
             .frame(height: 32)
+            .background(GeometryReader { trackGeo in
+                Color.clear.preference(
+                    key: SliderFramesKey.self,
+                    value: sessionID != nil ? [SliderFrameInfo(sessionID: sessionID!, isStartSlider: isStartSlider, frame: trackGeo.frame(in: .global))] : []
+                )
+            })
 
             // ── Hour Labels ──
             HStack {
