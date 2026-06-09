@@ -10,11 +10,14 @@
 //  ║    L0: Obsidian void                                          ║
 //  ║    L1: Retro-futuristic perspective grid                      ║
 //  ║    L2: Three breathing aurora orbs                            ║
-//  ║    L3: Detailed ASCII dragon watermark                        ║
+//  ║    L3: Ultra-detailed 30-row ASCII dragon watermark (v3.0)    ║
 //  ║    L4: CRT phosphor scanlines + sweep beam                    ║
 //  ║    L5: Cinematic vignette                                     ║
 //  ║                                                               ║
-//  ║  Also provides the reusable GlassCard ViewModifier.           ║
+//  ║  Also provides:                                               ║
+//  ║    • GlassCard ViewModifier (frosted glass + neon glow)       ║
+//  ║    • DragonArtRenderer (per-char coloring, 15+ classes)       ║
+//  ║    • Color.interpolate helper for smooth gradients            ║
 //  ╚═══════════════════════════════════════════════════════════════╝
 //
 
@@ -137,35 +140,50 @@ struct GlassmorphismBG: View {
         }
     }
 
-    // MARK: - L3: Dragon Watermark
+    // MARK: - L3: Dragon Watermark (Ultra-Detailed Holographic Blueprint)
 
     private var dragonWatermark: some View {
         let art: [String] = [
-            "  +--------------------------------------------------------+",
-            "  | [SYSTEM: MIDNIGHT_DRAGON]                 [SECTOR: 09] |",
-            "  +--------------------------------------------------------+",
-            "  |                                                        |",
-            "  |               _===~_  _~===_                           |",
-            "  |         _--^^#####//     \\#####^^--_                  |",
-            "  |      _-^##########// ( ) \\##########^-_               |",
-            "  |     -############// |\\^^/| \\############-            |",
-            "  |   _/############//  (o::o)  \\############\\_          |",
-            "  |  /#############((    \\//    ))#############\\         |",
-            "  | -###############\\\\  (    )  //###############-       |",
-            "  |-#################\\\\ / VV \\ //#################-     |",
-            "  |-###################\\\\/    \\\\//###################- |",
-            "  |_#/|##########/\\######(  /\\  )######/\\##########|\\#_|",
-            "  ||/  |#/\\#/\\#/\\  \\#/\\##\\ |  | /##/\\#/ /\\#/\\#/\\#|\\|     |",
-            "  |`   |/  V  V `   V \\#\\| |  | |/#/ V  ` V  V  \\|   `  |",
-            "  |    `   `  `      ` / | |  | | \\ `     `  `   `        |",
-            "  |                    (  | |  | |  )                      |",
-            "  |                   __\\ | |  | | /__                    |",
-            "  |                  (vvv(VVV)(VVV)vvv)                    |",
-            "  |                                                        |",
-            "  +--------------------------------------------------------+",
-            "  | [BLUEPRINT v2.0]        [CORE_CORE]       [SCALE: 100] |",
-            "  +--------------------------------------------------------+"
+            "  +====================================================================+",
+            "  | [SYS: MIDNIGHT_DRAGON]  [CLASS: ELDER]  [THREAT: OMEGA]  [SEC: 09] |",
+            "  +====================================================================+",
+            "  |  ~~*.                                                    .*~~       |",
+            "  |       ~~*.,          _~=====~_  _~=====~_         ,.*~~            |",
+            "  |    _,.-'^~~##===--^^~##########\\/##########~^^--===##~~^'-.,_       |",
+            "  | _-~^###########/////  ########  ########  \\\\\\\\\\ ###########^~-_   |",
+            "  |-################///   |  (^^^)  ||  (^^^)  |   \\\\\\################-|",
+            "  |##~###############/    |  (O::O) ||  (O::O) |    \\###############~##|",
+            "  |#/  ##############     |   \\VV/  ||  \\VV/   |     ##############  \\#|",
+            "  |/   ~############(     \\   =====/  \\=====   /     )############~   \\|",
+            "  |     ############(    __\\========~~~~========/__    )############     |",
+            "  |    ~#############\\  /  >>>====={FIRE}=====<<<  \\  /#############~    |",
+            "  |   ##~############\\\\/    >>>===={    }====<<<    \\\\/############~##   |",
+            "  |  ###~#############\\\\     >>>>=={    }==<<<<     //###########~###  |",
+            "  | ####~~############\\\\\\     )####(    )####(     ///############~~#### |",
+            "  | #####~~###########\\\\\\\\   /####/      \\####\\   ////###########~~##### |",
+            "  |  #####~~##########\\\\\\\\\\  /###/   /\\   \\###\\  /////##########~~#####  |",
+            "  |   ####~~#/|######/ \\###\\/###/   /  \\   \\###\\/###/ \\######|\\#~~####   |",
+            "  |    ###~ |/ |#/\\#/   \\##\\###/   / /\\ \\   \\###/##/   \\#/\\#| \\| ~###    |",
+            "  |     ~~  |  V  V     \\#\\##/   / /  \\ \\   \\##/#/     V  V  |  ~~     |",
+            "  |         `  `  `      \\\\#/   / /    \\ \\   \\#//      `  `  `         |",
+            "  |                       \\\\/   | |    | |   \\/                        |",
+            "  |                        \\\\  | |    | |  //                          |",
+            "  |                         \\\\_| |    | |_//                           |",
+            "  |                          (__\\|    |/__)                             |",
+            "  |                          (vvvVVVVVVvvv)                             |",
+            "  |                           \\\\^^^^^^//                               |",
+            "  |                            \\\\~~~~//                                |",
+            "  |                             \\\\||//                                 |",
+            "  |                              \\YY/                                  |",
+            "  |                                                                    |",
+            "  +====================================================================+",
+            "  | [BLUEPRINT v3.0]   [CORE_FORGE]   [SCALE: 100%]   [STATUS: ALIVE] |",
+            "  +====================================================================+"
         ]
+
+        let headerRowStart = 3   // first dragon body row index
+        let headerRowEnd   = 30  // last dragon body row index
+
         return VStack {
             Spacer()
             HStack {
@@ -173,17 +191,17 @@ struct GlassmorphismBG: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(art.enumerated()), id: \.offset) { i, line in
                         Group {
-                            if i >= 4 && i <= 19 {
-                                DragonArtRenderer.tokenizeDragonLine(line, row: i - 4, pulse: Double(breathe))
+                            if i >= headerRowStart && i <= headerRowEnd {
+                                DragonArtRenderer.tokenizeDragonLine(line, row: i - headerRowStart, pulse: Double(breathe))
                             } else {
                                 DragonArtRenderer.tokenizeBorderLine(line)
                             }
                         }
-                        .font(.system(size: 5.5, weight: .light, design: .monospaced))
+                        .font(.system(size: 4.2, weight: .light, design: .monospaced))
                     }
                 }
-                .opacity(0.06)
-                .padding(.trailing, 24).padding(.bottom, 16)
+                .opacity(0.07)
+                .padding(.trailing, 16).padding(.bottom, 12)
             }
         }
     }
@@ -260,63 +278,156 @@ extension View {
 // MARK: - Dragon Art Renderer & Color Interpolation Utilities
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Renders each character of the ASCII dragon art with per-character color mapping,
+/// animated pulse-driven glow effects, and a rich holographic color gradient system.
+///
+/// Character classes and their color assignments:
+/// - `O`, `:` (eyes): Crimson→Supernova animated pulse
+/// - `{FIRE}`, `>`, `<` (flame breath): Ember→Crimson animated glow
+/// - `#` (body scales): Vertical gradient — Cipher→Jade→Arcane→Ember
+/// - `=`, `~` (horns/crown/ridges): Supernova accent
+/// - `*`, `.` (sparkle particles): Mint glow
+/// - `V`, `v`, `Y` (talons/tail): Supernova / Steel
+/// - `/`, `\` (wing edges): Arcane with opacity
+/// - `(`, `)` (structural curves): Cipher with opacity
+/// - `^` (wing tips): Jade glow
+/// - `_`, `-` (border strokes): Steel dimmed
 struct DragonArtRenderer {
+
+    // ── Per-Character Color Engine ──────────────────────────────────
+
+    /// Returns the precise color for a single character based on its identity,
+    /// position within the dragon body (row/col), and the current animation pulse.
     static func getDragonCharColor(char: Character, row: Int, col: Int, pulse: Double = 0.5) -> Color {
+        // Whitespace — near-invisible structural padding
         if char == " " {
-            return Forge.steel.opacity(0.12)
+            return Forge.steel.opacity(0.08)
         }
-        
-        // Glowing Eyes in Row 4
-        if row == 4 && (char == "o" || char == ":") {
+
+        // ── EYES (rows 5–6: the (O::O) pairs) ──
+        if (row == 5 || row == 6) && (char == "O" || char == ":") {
             return Color.interpolate(from: Forge.crimson, to: Forge.supernova, fraction: pulse)
         }
-        
-        // Glowing Core in Row 7
-        if row == 7 && char == "V" {
-            return Color.interpolate(from: Forge.ember, to: Forge.supernova, fraction: pulse)
+
+        // ── FLAME BREATH (rows 9–12: >>>{FIRE}<<<) ──
+        if char == ">" || char == "<" {
+            return Color.interpolate(from: Forge.ember, to: Forge.crimson, fraction: pulse * 0.8)
         }
-        
-        // Claws/Talons
-        if row == 15 && char == "V" {
-            return Forge.supernova
+        if char == "{" || char == "}" {
+            return Color.interpolate(from: Forge.supernova, to: Forge.ember, fraction: pulse)
         }
-        if row == 15 && char == "v" {
-            return Forge.steel
-        }
-        
-        // Body Scales '#' with vertical gradient
-        if char == "#" {
-            let ratio = Double(row) / 15.0
-            if ratio < 0.3 {
-                return Color.interpolate(from: Forge.cipher, to: Forge.jade, fraction: ratio / 0.3)
-            } else if ratio < 0.7 {
-                return Color.interpolate(from: Forge.jade, to: Forge.arcane, fraction: (ratio - 0.3) / 0.4)
-            } else {
-                return Color.interpolate(from: Forge.arcane, to: Forge.ember, fraction: (ratio - 0.7) / 0.3)
+        if row >= 9 && row <= 12 {
+            let fireStr = "FIRE"
+            if fireStr.contains(char) {
+                return Color.interpolate(from: Forge.ember, to: Forge.crimson, fraction: pulse)
             }
         }
-        
-        // Horns / Crown in Row 0
-        if row == 0 && (char == "=" || char == "~" || char == "_") {
+
+        // ── TALONS / TAIL (rows 23–27: V, v, Y characters) ──
+        if row >= 23 && char == "V" {
             return Forge.supernova
         }
-        
+        if row >= 23 && char == "v" {
+            return Color.interpolate(from: Forge.steel, to: Forge.supernova, fraction: 0.4)
+        }
+        if char == "Y" {
+            return Forge.supernova
+        }
+
+        // ── WING CORE: V marks in upper body ──
+        if row >= 6 && row <= 7 && char == "V" {
+            return Color.interpolate(from: Forge.ember, to: Forge.supernova, fraction: pulse)
+        }
+
+        // ── BODY SCALES (#) — vertical body gradient ──
+        if char == "#" {
+            let totalRows: Double = 27.0
+            let ratio = Double(row) / totalRows
+            if ratio < 0.2 {
+                return Color.interpolate(from: Forge.cipher, to: Forge.jade, fraction: ratio / 0.2)
+            } else if ratio < 0.45 {
+                return Color.interpolate(from: Forge.jade, to: Forge.arcane, fraction: (ratio - 0.2) / 0.25)
+            } else if ratio < 0.7 {
+                return Color.interpolate(from: Forge.arcane, to: Forge.supernova, fraction: (ratio - 0.45) / 0.25)
+            } else {
+                return Color.interpolate(from: Forge.supernova, to: Forge.ember, fraction: (ratio - 0.7) / 0.3)
+            }
+        }
+
+        // ── SPARKLE PARTICLES (*.) — neon mint accents ──
+        if char == "*" {
+            return Color.interpolate(from: Forge.mint, to: Forge.cipher, fraction: pulse)
+        }
+
+        // ── HORNS / CROWN / RIDGES (=~) ──
+        if char == "=" {
+            // Structural wing membrane — subtle shimmer
+            if row >= 7 && row <= 11 {
+                return Color.interpolate(from: Forge.cipher, to: Forge.arcane, fraction: pulse * 0.6)
+            }
+            return Forge.supernova.opacity(0.9)
+        }
+        if char == "~" {
+            if row <= 2 {
+                return Forge.supernova.opacity(0.85)
+            }
+            return Color.interpolate(from: Forge.arcane, to: Forge.cipher, fraction: pulse * 0.5)
+        }
+
+        // ── WING TIPS (^) ──
+        if char == "^" {
+            if row <= 4 {
+                return Forge.jade.opacity(0.7)
+            }
+            return Color.interpolate(from: Forge.jade, to: Forge.mint, fraction: pulse * 0.6)
+        }
+
+        // ── WING EDGE LINES (/ \) ──
         if char == "/" || char == "\\" {
-            return Forge.arcane.opacity(0.8)
+            return Forge.arcane.opacity(0.7)
         }
-        
+
+        // ── STRUCTURAL CURVES ( () ) ──
         if char == "(" || char == ")" {
-            return Forge.cipher.opacity(0.8)
+            return Forge.cipher.opacity(0.75)
         }
-        
-        return Forge.steel.opacity(0.6)
+
+        // ── STRUCTURAL BORDERS (- _) ──
+        if char == "-" || char == "_" {
+            return Forge.steel.opacity(0.45)
+        }
+
+        // ── DOTS / COMMAS ──
+        if char == "." || char == "," {
+            return Forge.mint.opacity(0.5)
+        }
+        if char == "'" {
+            return Forge.cipher.opacity(0.4)
+        }
+
+        // ── BACKTICK FEATHERS ──
+        if char == "`" {
+            return Forge.steel.opacity(0.35)
+        }
+
+        // ── PIPE SEPARATORS ──
+        if char == "|" {
+            return Forge.steel.opacity(0.5)
+        }
+
+        // ── DEFAULT: Dim steel for anything else ──
+        return Forge.steel.opacity(0.5)
     }
-    
+
+    // ── Line Tokenizers ─────────────────────────────────────────────
+
+    /// Tokenizes a single dragon body line, extracting border pipes and
+    /// rendering the interior characters with per-character coloring.
     static func tokenizeDragonLine(_ line: String, row: Int, pulse: Double = 0.5) -> some View {
         var middle = line
         var prefixText = ""
         var suffixText = ""
-        
+
         if middle.hasPrefix("  | ") {
             prefixText = "  | "
             middle.removeFirst(4)
@@ -324,7 +435,7 @@ struct DragonArtRenderer {
             prefixText = "  |"
             middle.removeFirst(3)
         }
-        
+
         if middle.hasSuffix(" |") {
             suffixText = " |"
             middle.removeLast(2)
@@ -332,26 +443,25 @@ struct DragonArtRenderer {
             suffixText = "|"
             middle.removeLast(1)
         }
-        
+
         return HStack(spacing: 0) {
             if !prefixText.isEmpty {
-                Text(prefixText).foregroundColor(Forge.steel.opacity(0.3))
+                Text(prefixText).foregroundColor(Forge.steel.opacity(0.25))
             }
-            
-            // Build the middle tokenized text
             Self.buildTokenizedText(middle, row: row, pulse: pulse)
-            
             if !suffixText.isEmpty {
-                Text(suffixText).foregroundColor(Forge.steel.opacity(0.3))
+                Text(suffixText).foregroundColor(Forge.steel.opacity(0.25))
             }
         }
     }
-    
+
+    /// Groups consecutive characters by computed color and renders
+    /// each group as a single `Text` view for optimal performance.
     static func buildTokenizedText(_ text: String, row: Int, pulse: Double) -> some View {
         var segments: [(String, Color)] = []
         var currentGroup = ""
         var currentColor: Color? = nil
-        
+
         for (col, char) in text.enumerated() {
             let charColor = self.getDragonCharColor(char: char, row: row, col: col, pulse: pulse)
             if let activeColor = currentColor {
@@ -367,30 +477,40 @@ struct DragonArtRenderer {
                 currentColor = charColor
             }
         }
-        
+
         if !currentGroup.isEmpty, let activeColor = currentColor {
             segments.append((currentGroup, activeColor))
         }
-        
+
         return HStack(spacing: 0) {
             ForEach(0..<segments.count, id: \.self) { idx in
                 Text(segments[idx].0).foregroundColor(segments[idx].1)
             }
         }
     }
-    
+
+    // ── Border / Metadata Line Renderer ─────────────────────────────
+
+    /// Renders the holographic blueprint border lines with colored metadata tags.
     @ViewBuilder
     static func tokenizeBorderLine(_ line: String) -> some View {
-        if line.contains("SYSTEM: MIDNIGHT_DRAGON") {
+        if line.contains("SYS: MIDNIGHT_DRAGON") {
             HStack(spacing: 0) {
                 Text("  | ").foregroundColor(Forge.steel.opacity(0.3))
                 Text("[").foregroundColor(Forge.steel.opacity(0.5))
-                Text("SYSTEM: ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("SYS: ").foregroundColor(Forge.steel.opacity(0.5))
                 Text("MIDNIGHT_DRAGON").foregroundColor(Forge.ember).bold()
-                Text("]").foregroundColor(Forge.steel.opacity(0.5))
-                Text("                 ").foregroundColor(.clear)
+                Text("]  ").foregroundColor(Forge.steel.opacity(0.5))
                 Text("[").foregroundColor(Forge.steel.opacity(0.5))
-                Text("SECTOR: ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("CLASS: ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("ELDER").foregroundColor(Forge.arcane).bold()
+                Text("]  ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("[").foregroundColor(Forge.steel.opacity(0.5))
+                Text("THREAT: ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("OMEGA").foregroundColor(Forge.crimson).bold()
+                Text("]  ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("[").foregroundColor(Forge.steel.opacity(0.5))
+                Text("SEC: ").foregroundColor(Forge.steel.opacity(0.5))
                 Text("09").foregroundColor(Forge.jade).bold()
                 Text("]").foregroundColor(Forge.steel.opacity(0.5))
                 Text(" |").foregroundColor(Forge.steel.opacity(0.3))
@@ -400,21 +520,23 @@ struct DragonArtRenderer {
                 Text("  | ").foregroundColor(Forge.steel.opacity(0.3))
                 Text("[").foregroundColor(Forge.steel.opacity(0.5))
                 Text("BLUEPRINT ").foregroundColor(Forge.steel.opacity(0.5))
-                Text("v2.1").foregroundColor(Forge.supernova).bold()
-                Text("]").foregroundColor(Forge.steel.opacity(0.5))
-                Text("        ").foregroundColor(.clear)
+                Text("v3.0").foregroundColor(Forge.supernova).bold()
+                Text("]   ").foregroundColor(Forge.steel.opacity(0.5))
                 Text("[").foregroundColor(Forge.steel.opacity(0.5))
-                Text("CORE_CORE").foregroundColor(Forge.jade).bold()
-                Text("]").foregroundColor(Forge.steel.opacity(0.5))
-                Text("       ").foregroundColor(.clear)
+                Text("CORE_FORGE").foregroundColor(Forge.jade).bold()
+                Text("]   ").foregroundColor(Forge.steel.opacity(0.5))
                 Text("[").foregroundColor(Forge.steel.opacity(0.5))
                 Text("SCALE: ").foregroundColor(Forge.steel.opacity(0.5))
                 Text("100%").foregroundColor(Forge.cipher).bold()
+                Text("]   ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("[").foregroundColor(Forge.steel.opacity(0.5))
+                Text("STATUS: ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("ALIVE").foregroundColor(Forge.mint).bold()
                 Text("]").foregroundColor(Forge.steel.opacity(0.5))
                 Text(" |").foregroundColor(Forge.steel.opacity(0.3))
             }
         } else {
-            Text(line).foregroundColor(Forge.steel.opacity(0.35))
+            Text(line).foregroundColor(Forge.steel.opacity(0.3))
         }
     }
 }
