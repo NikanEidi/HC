@@ -16,12 +16,25 @@ import SwiftUI
 struct TrackerHomeView: View {
 
     @State private var vm = TrackerViewModel()
+    @State private var gesture = HandGestureManager()
     @State private var flipped = false
     @State private var lines: [TLine] = []
     @State private var blink = true
     @State private var toast = false
     @State private var uptime = 0
+    @State private var dragonPulse: Double = 0.0
 
+    // ── Gesture-driven state ──
+    @State private var isCopyButtonGlowing = false
+    @State private var gestureHoveredDate: Date? = nil
+    @State private var hoveredElementID: String? = nil
+    @State private var copyButtonFrame: CGRect = .zero
+    @State private var calendarGridFrame: CGRect = .zero
+    @State private var sliderFrames: [SliderFrameInfo] = []
+    @State private var tappableFrames: [TappableElement] = []
+    @State private var clickRipple = false
+    @State private var cameraActive = false
+    @State private var scrollTargetIndex: Int? = nil
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -35,11 +48,59 @@ struct TrackerHomeView: View {
                 .padding(.vertical, 32)
 
                 if toast { toastBanner.transition(.scale(scale: 0.92).combined(with: .opacity)) }
+
+                // ━━━ High-Frequency Gesture Cursor & Hover Overlay ━━━
+                GestureCursorOverlay(
+                    gesture: gesture,
+                    windowSize: geo.size,
+                    gestureHoveredDate: $gestureHoveredDate,
+                    hoveredElementID: $hoveredElementID,
+                    isCopyButtonGlowing: $isCopyButtonGlowing,
+                    tappableFrames: tappableFrames,
+                    copyButtonFrame: copyButtonFrame,
+                    sliderFrames: sliderFrames,
+                    flipped: flipped,
+                    scrollTargetIndex: $scrollTargetIndex,
+                    sessionCount: vm.sessions.count,
+                    onAction: { dispatchTappableAction($0) },
+                    onToggleDate: { vm.toggleDate($0) },
+                    onCopy: {
+                        ClipboardManager.copy(vm.generateReportString())
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { toast = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            withAnimation(.easeOut) { toast = false }
+                        }
+                    },
+                    resolveDate: { index in
+                        guard index >= 0, index < vm.daysInMonth.count else { return nil }
+                        return vm.daysInMonth[index]
+                    },
+                    startMinutesBinding: { vm.startMinutesBinding(for: $0) },
+                    endMinutesBinding: { vm.endMinutesBinding(for: $0) }
+                )
             }
+            .onAppear {
+                boot()
+                // Camera starts disabled by default. User must toggle it ON to start hand gestures.
+                withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                    dragonPulse = 1.0
+                }
+            }
+            .onDisappear { gesture.stopSession() }
+            .onChange(of: vm.sessions) { _, _ in render() }
+            // ── Gesture: Card flip ──
+            .onChange(of: gesture.shouldSwitchView) { _, new in
+                if new {
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { flipped.toggle() }
+                }
+            }
+            // ── Collect preference frames ──
+            .onPreferenceChange(CopyButtonFrameKey.self) { copyButtonFrame = $0 }
+            .onPreferenceChange(CalendarGridFrameKey.self) { calendarGridFrame = $0 }
+            .onPreferenceChange(SliderFramesKey.self) { sliderFrames = $0 }
+            .onPreferenceChange(TappableFramesKey.self) { tappableFrames = $0 }
         }
         .preferredColorScheme(.dark)
-        .onAppear { boot() }
-        .onChange(of: vm.sessions) { _, _ in render() }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -48,11 +109,11 @@ struct TrackerHomeView: View {
 
     private func cardPanel(_ geo: GeometryProxy) -> some View {
         VStack(spacing: 20) {
-            HStack(spacing: 14) { flipBtn; Spacer(); if flipped { exportBtn }; pill }
+            HStack(spacing: 14) { flipBtn; Spacer(); if flipped { exportBtn }; cameraToggleBtn; pill }
             GlitchFlipContainer(isFlipped: $flipped) {
-                GlassCalendarView(viewModel: vm)
+                GlassCalendarView(viewModel: vm, gestureHoveredDate: gestureHoveredDate)
             } back: {
-                TimeInputTableView(viewModel: vm)
+                TimeInputTableView(viewModel: vm, isCopyButtonGlowing: isCopyButtonGlowing, scrollTargetIndex: $scrollTargetIndex)
             }.frame(maxHeight: .infinity)
         }
     }
@@ -138,7 +199,14 @@ struct TrackerHomeView: View {
             if l.ln {
                 Text(String(format: "%3d", l.n)).foregroundColor(Forge.steel.opacity(0.08)).padding(.trailing, 10)
             }
-            Text(l.t).foregroundColor(l.c)
+            switch l.type {
+            case .normal:
+                Text(l.t).foregroundColor(l.c)
+            case .dragonBorder:
+                DragonArtRenderer.tokenizeBorderLine(l.t)
+            case .dragonContent(let rowIdx):
+                DragonArtRenderer.tokenizeDragonLine(l.t, row: rowIdx, pulse: dragonPulse)
+            }
         }
         .font(.system(size: 12, weight: l.b ? .bold : .regular, design: .monospaced)).padding(.vertical, 0.5)
     }
@@ -160,9 +228,15 @@ struct TrackerHomeView: View {
     private var flipBtn: some View {
         Button { UIImpactFeedbackGenerator(style: .medium).impactOccurred(); flipped.toggle() } label: {
             HStack(spacing: 8) {
-                Image(systemName: flipped ? "calendar" : "tablecells").font(.system(size: 13, weight: .bold))
+                Image(systemName: flipped ? "calendar" : "tablecells")
+                    .font(.system(size: 13, weight: .bold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Forge.cipher)
+                    .symbolEffect(.bounce, value: flipped)
                 Text(flipped ? "CALENDAR" : "TIMESHEET")
                     .font(.system(size: 11, weight: .black, design: .monospaced)).tracking(2)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundColor(Forge.cipher)
             .padding(.horizontal, 22).padding(.vertical, 13)
@@ -170,8 +244,10 @@ struct TrackerHomeView: View {
                 .overlay(Capsule().strokeBorder(
                     LinearGradient(colors: [Forge.cipher.opacity(0.20), Forge.cipher.opacity(0.04)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
-                .shadow(color: Forge.cipher.opacity(0.08), radius: 14))
-        }.hoverEffect(.lift)
+                .shadow(color: Forge.cipher.opacity(0.12), radius: 14))
+        }
+        .hoverEffect(.lift)
+        .reportTappableFrame(id: "flipBtn")
     }
 
     private var exportBtn: some View {
@@ -182,8 +258,14 @@ struct TrackerHomeView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { withAnimation(.easeOut) { toast = false } }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "doc.on.doc.fill").font(.system(size: 11))
+                Image(systemName: "doc.on.doc.fill")
+                    .font(.system(size: 11))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Forge.jade, Forge.cipher)
+                    .symbolEffect(.bounce, value: toast)
                 Text("EXPORT").font(.system(size: 11, weight: .black, design: .monospaced)).tracking(2)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundColor(Forge.jade)
             .padding(.horizontal, 20).padding(.vertical, 13)
@@ -191,8 +273,42 @@ struct TrackerHomeView: View {
                 .overlay(Capsule().strokeBorder(
                     LinearGradient(colors: [Forge.jade.opacity(0.20), Forge.jade.opacity(0.04)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
-                .shadow(color: Forge.jade.opacity(0.08), radius: 14))
-        }.hoverEffect(.lift)
+                .shadow(color: Forge.jade.opacity(0.12), radius: 14))
+        }
+        .hoverEffect(.lift)
+        .reportTappableFrame(id: "exportBtn")
+    }
+
+    private var cameraToggleBtn: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            cameraActive.toggle()
+            if cameraActive {
+                gesture.startSession()
+            } else {
+                gesture.stopSession()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: cameraActive ? "video.fill" : "video.slash.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(cameraActive ? Forge.jade : Forge.crimson)
+                    .symbolEffect(.pulse, options: .repeating, isActive: cameraActive)
+                Text(cameraActive ? "CAM ON" : "CAM OFF")
+                    .font(.system(size: 10, weight: .black, design: .monospaced)).tracking(1.5)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .foregroundColor(cameraActive ? Forge.jade : Forge.crimson)
+            .padding(.horizontal, 16).padding(.vertical, 13)
+            .background(Capsule().fill((cameraActive ? Forge.jade : Forge.crimson).opacity(0.04))
+                .overlay(Capsule().strokeBorder(
+                    (cameraActive ? Forge.jade : Forge.crimson).opacity(0.15), lineWidth: 0.5))
+                .shadow(color: (cameraActive ? Forge.jade : Forge.crimson).opacity(0.12), radius: 14))
+        }
+        .hoverEffect(.lift)
+        .reportTappableFrame(id: "cameraToggleBtn")
     }
 
     private var pill: some View {
@@ -235,25 +351,70 @@ struct TrackerHomeView: View {
     private func render() {
         var l: [TLine] = []; var n = 1
         let dragon: [String] = [
-            "                            _===~_  _~===_",
-            "                      _--^^#####//     \\#####^^--_",
-            "                   _-^##########// ( ) \\##########^-_",
-            "                  -############// |\\^^/| \\############-",
-            "                _/############//  (o::o)  \\############\\_",
-            "               /#############((    \\//    ))#############\\",
-            "              -###############\\\\  (    )  //###############-",
-            "             -#################\\\\ / VV \\ //#################-",
-            "            -###################\\\\/    \\\\//###################-",
-            "           _#/|##########/\\######(  /\\  )######/\\##########|\\#_",
-            "          |/  |#/\\#/\\#/\\  \\#/\\##\\ |  | /##/\\#/ /\\#/\\#/\\#|  \\|",
-            "          `   |/  V  V `   V \\#\\| |  | |/#/ V  ` V  V  \\|   `",
-            "              `   `  `      ` / | |  | | \\ `     `  `   `",
-            "                              (  | |  | |  )",
-            "                             __\\ | |  | | /__",
-            "                            (vvv(VVV)(VVV)vvv)"
+            "  +--------------------------------------------------------+",
+            "  | [SYSTEM: MIDNIGHT_DRAGON]                 [SECTOR: 09] |",
+            "  +--------------------------------------------------------+",
+            "  |                                                        |",
+            "  |               _===~_  _~===_                           |",
+            "  |         _--^^#####//     \\#####^^--_                   |",
+            "  |      _-^##########// ( ) \\##########^-_                |",
+            "  |     -############// |\\^^/| \\############-              |",
+            "  |   _/############//  (o::o)  \\############\\_            |",
+            "  |  /#############((    \\//    ))#############\\           |",
+            "  | -###############\\\\  (    )  //###############-         |",
+            "  |-#################\\\\ / VV \\ //#################-        |",
+            "  |-###################\\\\/    \\\\//###################-     |",
+            "  |_#/|##########/\\######(  /\\  )######/\\##########|\\#_    |",
+            "  ||/  |#/\\#/\\#/\\  \\#/\\##\\ |  | /##/\\#/ /\\#/\\#/\\#|  \\|     |",
+            "  |`   |/  V  V `   V \\#\\| |  | |/#/ V  ` V  V  \\|   `     |",
+            "  |    `   `  `      ` / | |  | | \\ `     `  `   `         |",
+            "  |                    (  | |  | |  )                      |",
+            "  |                   __\\ | |  | | /__                     |",
+            "  |                  (vvv(VVV)(VVV)vvv)                    |",
+            "  |                                                        |",
+            "  +--------------------------------------------------------+",
+            "  | [BLUEPRINT v2.0]        [CORE_CORE]       [SCALE: 100] |",
+            "  +--------------------------------------------------------+"
         ]
 
-        for a in dragon { l.append(TLine(n: n, t: a, c: Forge.cipher.opacity(0.25), ln: true)); n += 1 }
+        let dragonColors: [Color] = [
+            Forge.steel.opacity(0.3),
+            Forge.jade.opacity(0.7),
+            Forge.steel.opacity(0.3),
+            .clear,
+            Forge.supernova.opacity(0.55),
+            Forge.supernova.opacity(0.55),
+            Forge.arcane.opacity(0.50),
+            Forge.arcane.opacity(0.50),
+            Forge.arcane.opacity(0.45),
+            Forge.cipher.opacity(0.45),
+            Forge.cipher.opacity(0.40),
+            Forge.cipher.opacity(0.40),
+            Forge.cipher.opacity(0.35),
+            Forge.jade.opacity(0.35),
+            Forge.jade.opacity(0.30),
+            Forge.ember.opacity(0.30),
+            Forge.ember.opacity(0.25),
+            Forge.ember.opacity(0.25),
+            Forge.ember.opacity(0.20),
+            Forge.ember.opacity(0.20),
+            .clear,
+            Forge.steel.opacity(0.3),
+            Forge.cipher.opacity(0.6),
+            Forge.steel.opacity(0.3)
+        ]
+
+        for (i, a) in dragon.enumerated() {
+            let color = dragonColors[i]
+            let type: TLineType
+            if i >= 4 && i <= 19 {
+                type = .dragonContent(row: i - 4)
+            } else {
+                type = .dragonBorder
+            }
+            l.append(TLine(n: n, t: a, c: color, ln: true, type: type))
+            n += 1
+        }
         l.append(TLine(n: n, t: "", c: .clear, ln: false)); n += 1
 
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm:ss"
@@ -288,6 +449,59 @@ struct TrackerHomeView: View {
         lines = l
     }
 
+    // MARK: - Gesture Handlers
+
+    /// Converts normalized finger position (0-1) → global coordinates (relative to window)
+    /// and determines what the cursor is hovering over.
+
+
+    /// Routes a tappable element ID to its corresponding action.
+    private func dispatchTappableAction(_ id: String) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        
+        // Handle calendar day cell selection
+        if id.hasPrefix("date_") {
+            if let indexStr = id.split(separator: "_").last,
+               let index = Int(indexStr),
+               index >= 0, index < vm.daysInMonth.count,
+               let date = vm.daysInMonth[index] {
+                vm.toggleDate(date)
+            }
+            return
+        }
+
+        switch id {
+        case "cameraToggleBtn":
+            cameraActive.toggle()
+            if cameraActive {
+                gesture.startSession()
+            } else {
+                gesture.stopSession()
+            }
+        case "flipBtn":
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { flipped.toggle() }
+        case "exportBtn":
+            guard !vm.generateReportString().isEmpty else { return }
+            ClipboardManager.copy(vm.generateReportString())
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { toast = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                withAnimation(.easeOut) { toast = false }
+            }
+        case "prevMonth":
+            vm.previousMonth()
+        case "nextMonth":
+            vm.nextMonth()
+        case "copyBtn":
+            ClipboardManager.copy(vm.generateReportString())
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { toast = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                withAnimation(.easeOut) { toast = false }
+            }
+        default:
+            break
+        }
+    }
+
     // MARK: - Boot Sequence
 
     private func boot() {
@@ -299,7 +513,319 @@ struct TrackerHomeView: View {
     private func fmtUp() -> String { String(format: "%02d:%02d", uptime / 60, uptime % 60) }
 }
 
+enum TLineType {
+    case normal
+    case dragonBorder
+    case dragonContent(row: Int)
+}
+
 /// A single terminal output line with metadata for rendering.
-struct TLine { let n: Int; let t: String; let c: Color; var b: Bool = false; var ln: Bool = true }
+struct TLine {
+    let n: Int
+    let t: String
+    let c: Color
+    var b: Bool = false
+    var ln: Bool = true
+    var type: TLineType = .normal
+    
+    init(n: Int, t: String, c: Color, b: Bool = false, ln: Bool = true, type: TLineType = .normal) {
+        self.n = n
+        self.t = t
+        self.c = c
+        self.b = b
+        self.ln = ln
+        self.type = type
+    }
+}
 
 #Preview { TrackerHomeView() }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MARK: - Gesture Cursor & Hover Overlay (High Frequency)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+struct GestureCursorOverlay: View {
+    let gesture: HandGestureManager
+    let windowSize: CGSize
+    @Binding var gestureHoveredDate: Date?
+    @Binding var hoveredElementID: String?
+    @Binding var isCopyButtonGlowing: Bool
+
+    let tappableFrames: [TappableElement]
+    let copyButtonFrame: CGRect
+    let sliderFrames: [SliderFrameInfo]
+    let flipped: Bool
+    @Binding var scrollTargetIndex: Int?
+    let sessionCount: Int
+    
+    let onAction: (String) -> Void
+    let onToggleDate: (Date) -> Void
+    let onCopy: () -> Void
+    let resolveDate: (Int) -> Date?
+    
+    let startMinutesBinding: (UUID) -> (get: () -> Int, set: (Int) -> Void)
+    let endMinutesBinding: (UUID) -> (get: () -> Int, set: (Int) -> Void)
+
+    @State private var clickRipple = false
+    @State private var frozenCursorPosition: CGPoint? = nil
+    @State private var activeDraggingSlider: SliderFrameInfo? = nil
+
+    // Drag-to-scroll states
+    @State private var isDraggingList = false
+    @State private var dragListStartY: CGFloat = 0
+    @State private var dragListStartScrollIndex: Int = 0
+
+    var body: some View {
+        ZStack {
+            if gesture.isTracking {
+                cursorView
+            }
+        }
+        .onChange(of: gesture.isClickDetected) { _, new in
+            if new { handleClick() }
+        }
+        .onChange(of: gesture.fingerPosition) { _, pos in
+            updateHoverState(pos)
+        }
+        .onChange(of: gesture.isFingerDown) { _, isDown in
+            let pos = gesture.fingerPosition
+            let globalPos = CGPoint(
+                x: pos.x * windowSize.width,
+                y: pos.y * windowSize.height
+            )
+            if isDown {
+                var hitSlider = false
+                
+                // Find the closest slider frame mathematically to avoid picking wrong from/to
+                var closestSlider: SliderFrameInfo? = nil
+                var minSliderDistY: CGFloat = CGFloat.infinity
+                
+                for slider in sliderFrames {
+                    let dx = max(slider.frame.minX - globalPos.x, 0, globalPos.x - slider.frame.maxX)
+                    let dy = max(slider.frame.minY - globalPos.y, 0, globalPos.y - slider.frame.maxY)
+                    
+                    // Very generous thresholds to make selection effortless:
+                    // 150pt horizontally and 60pt vertically
+                    if dx < 150.0 && dy < 60.0 {
+                        if dy < minSliderDistY {
+                            minSliderDistY = dy
+                            closestSlider = slider
+                        }
+                    }
+                }
+                
+                if let slider = closestSlider {
+                    activeDraggingSlider = slider
+                    hitSlider = true
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                }
+                
+                // If not dragging a slider, lock the cursor position or drag-scroll the timesheet list
+                if !hitSlider {
+                    if flipped {
+                        // Pinching down on the timesheet card area (left side) scrolls it
+                        let cardWidth = min(windowSize.width * 0.45, 490.0)
+                        if globalPos.x < cardWidth {
+                            isDraggingList = true
+                            dragListStartY = globalPos.y
+                            dragListStartScrollIndex = scrollTargetIndex ?? 0
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.25)
+                        } else {
+                            frozenCursorPosition = globalPos
+                        }
+                    } else {
+                        frozenCursorPosition = globalPos
+                    }
+                }
+            } else {
+                activeDraggingSlider = nil
+                frozenCursorPosition = nil
+                isDraggingList = false
+            }
+        }
+    }
+
+    @ViewBuilder private var cursorView: some View {
+        let rawPos = CGPoint(
+            x: gesture.fingerPosition.x * windowSize.width,
+            y: gesture.fingerPosition.y * windowSize.height
+        )
+        let pos = frozenCursorPosition ?? rawPos
+        let isHovering = hoveredElementID != nil || gestureHoveredDate != nil || isCopyButtonGlowing
+        let accentColor = gesture.isFingerDown ? Forge.jade
+                        : isHovering ? Forge.arcane
+                        : Forge.cipher
+
+        ZStack {
+            // Outer ring — expands/contracts on pinch
+            Circle()
+                .stroke(accentColor.opacity(0.4), lineWidth: gesture.isFingerDown ? 2.0 : 1.2)
+                .frame(
+                    width: gesture.isFingerDown ? 14 : (isHovering ? 30 : 24),
+                    height: gesture.isFingerDown ? 14 : (isHovering ? 30 : 24)
+                )
+                .shadow(color: accentColor.opacity(0.5), radius: gesture.isFingerDown ? 6 : 10)
+
+            // Inner dot
+            Circle()
+                .fill(accentColor)
+                .frame(width: gesture.isFingerDown ? 6 : 4, height: gesture.isFingerDown ? 6 : 4)
+                .shadow(color: accentColor.opacity(0.7), radius: 4)
+
+            // Click ripple
+            if clickRipple {
+                Circle()
+                    .stroke(Forge.jade.opacity(0.6), lineWidth: 2)
+                    .frame(width: 44, height: 44)
+                    .scaleEffect(clickRipple ? 1.5 : 0.5)
+                    .opacity(clickRipple ? 0 : 1)
+            }
+
+            // Crosshair lines (subtle)
+            if !gesture.isFingerDown {
+                Rectangle()
+                    .fill(accentColor.opacity(0.08))
+                    .frame(width: 1, height: isHovering ? 18 : 12)
+                Rectangle()
+                    .fill(accentColor.opacity(0.08))
+                    .frame(width: isHovering ? 18 : 12, height: 1)
+            }
+        }
+        .position(pos)
+        .allowsHitTesting(false)
+        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: gesture.isFingerDown)
+        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isHovering)
+    }
+
+    private func updateHoverState(_ pos: CGPoint) {
+        let globalPos = CGPoint(
+            x: pos.x * windowSize.width,
+            y: pos.y * windowSize.height
+        )
+
+        // ── 1. If currently dragging a time slider, update it and return ──
+        if let slider = activeDraggingSlider {
+            let frac = max(0, min(1, (globalPos.x - slider.frame.minX) / slider.frame.width))
+            let snapped = (Int(frac * 1440) / 15) * 15
+            
+            let currentVal = slider.isStartSlider ? startMinutesBinding(slider.sessionID).get() : endMinutesBinding(slider.sessionID).get()
+            if snapped != currentVal {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.3)
+                if slider.isStartSlider {
+                    startMinutesBinding(slider.sessionID).set(snapped)
+                } else {
+                    endMinutesBinding(slider.sessionID).set(snapped)
+                }
+            }
+            return
+        }
+
+        // ── 2. If currently dragging the timesheet list, scroll it and return ──
+        if isDraggingList {
+            let deltaY = globalPos.y - dragListStartY
+            let rowsToScroll = Int(deltaY / 30.0)
+            let targetIndex = max(0, min(sessionCount - 1, dragListStartScrollIndex - rowsToScroll))
+            if targetIndex != scrollTargetIndex {
+                scrollTargetIndex = targetIndex
+                UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.35)
+            }
+            return
+        }
+
+        // ── 3. If cursor is locked, do not update hover targets ──
+        if frozenCursorPosition != nil { return }
+
+        // ── 4. Precision Target Matching ──
+        let foundHover = findTargetElement(at: globalPos)
+        hoveredElementID = foundHover
+
+        // ── Map hovered element to calendar date if applicable ──
+        if let hoverId = foundHover, hoverId.hasPrefix("date_"),
+           let indexStr = hoverId.split(separator: "_").last,
+           let index = Int(indexStr) {
+            gestureHoveredDate = resolveDate(index)
+        } else {
+            gestureHoveredDate = nil
+        }
+
+        // ── Copy button glow ──
+        if let hoverId = foundHover, hoverId == "copyBtn" {
+            isCopyButtonGlowing = true
+        } else {
+            isCopyButtonGlowing = false
+        }
+    }
+
+    private func handleClick() {
+        if isDraggingList { return }
+
+        // Proactively freeze cursor position immediately if not already frozen to prevent click coordinate drift
+        let pos = gesture.fingerPosition
+        let globalPos = CGPoint(
+            x: pos.x * windowSize.width,
+            y: pos.y * windowSize.height
+        )
+        if frozenCursorPosition == nil {
+            frozenCursorPosition = globalPos
+        }
+
+        // Fire ripple animation
+        withAnimation(.easeOut(duration: 0.35)) { clickRipple = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { clickRipple = false }
+
+        // ── 1. Check registered tappable elements (buttons + calendar days) ──
+        if let targetId = findTargetElement(at: globalPos) {
+            onAction(targetId)
+            return
+        }
+
+        // ── 2. Check copy button (in timesheet view) fallback ──
+        let expandedCopy = copyButtonFrame.insetBy(dx: -20, dy: -20)
+        if flipped, expandedCopy.contains(globalPos) {
+            onCopy()
+            return
+        }
+
+        // ── 3. Check calendar day cells ──
+        if !flipped, let date = gestureHoveredDate {
+            onToggleDate(date)
+            return
+        }
+    }
+
+    private func findTargetElement(at globalPos: CGPoint) -> String? {
+        let activeElements = tappableFrames.filter { el in
+            if flipped {
+                return !el.id.hasPrefix("date_") && el.id != "prevMonth" && el.id != "nextMonth"
+            } else {
+                return el.id != "copyBtn"
+            }
+        }
+        
+        // Exact bounding box matches
+        let exactMatches = activeElements.filter { $0.frame.contains(globalPos) }
+        if !exactMatches.isEmpty {
+            return exactMatches.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })?.id
+        }
+        
+        // Close matches within 15 points
+        var closestId: String? = nil
+        var minDistance: CGFloat = CGFloat.infinity
+        
+        for el in activeElements {
+            let dist = distanceToFrame(globalPos, el.frame)
+            if dist < 15.0 && dist < minDistance {
+                minDistance = dist
+                closestId = el.id
+            }
+        }
+        
+        return closestId
+    }
+
+    private func distanceToFrame(_ point: CGPoint, _ rect: CGRect) -> CGFloat {
+        let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+        let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+        return hypot(dx, dy)
+    }
+}

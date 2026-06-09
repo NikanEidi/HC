@@ -5,6 +5,7 @@
 //  Back card — Dynamic session rows with NeonTimeSliders.
 //  Each row displays an indexed date badge, duration gradient,
 //  and dual FROM/TO sliders. Forge palette throughout.
+//  Supports gesture hover glow on COPY button and slider frame reporting.
 //
 
 import SwiftUI
@@ -15,6 +16,8 @@ import SwiftUI
 struct TimeInputTableView: View {
 
     @Bindable var viewModel: TrackerViewModel
+    var isCopyButtonGlowing: Bool = false
+    @Binding var scrollTargetIndex: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,27 +51,50 @@ struct TimeInputTableView: View {
                 ClipboardManager.copy(viewModel.generateReportString())
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "doc.on.doc.fill").font(.system(size: 11))
+                    Image(systemName: "doc.on.doc.fill")
+                        .font(.system(size: 11))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(Forge.jade)
+                        .symbolEffect(.bounce, value: isCopyButtonGlowing)
                     Text("COPY").font(.system(size: 10, weight: .black, design: .monospaced)).tracking(2)
                 }
                 .foregroundColor(Forge.jade)
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 .background(
-                    Capsule().fill(Forge.jade.opacity(0.05))
-                        .overlay(Capsule().strokeBorder(Forge.jade.opacity(0.12), lineWidth: 0.5)))
-            }.hoverEffect(.lift)
+                    Capsule().fill(Forge.jade.opacity(isCopyButtonGlowing ? 0.12 : 0.05))
+                        .overlay(Capsule().strokeBorder(Forge.jade.opacity(isCopyButtonGlowing ? 0.35 : 0.12),
+                                                        lineWidth: isCopyButtonGlowing ? 1.2 : 0.5)))
+            }
+            .hoverEffect(.lift)
+            .shadow(color: isCopyButtonGlowing ? Forge.jade.opacity(0.5) : .clear, radius: isCopyButtonGlowing ? 14 : 0)
+            .scaleEffect(isCopyButtonGlowing ? 1.05 : 1.0)
+            .animation(.easeInOut(duration: 0.2), value: isCopyButtonGlowing)
+            .background(GeometryReader { geo in
+                Color.clear.preference(key: CopyButtonFrameKey.self, value: geo.frame(in: .global))
+            })
+            .reportTappableFrame(id: "copyBtn")
         }
     }
 
     // MARK: - Session List
 
     private var list: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 14) {
-                ForEach(Array(viewModel.sessions.enumerated()), id: \.element.id) { i, s in
-                    row(s, idx: i)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 14) {
+                    ForEach(Array(viewModel.sessions.enumerated()), id: \.element.id) { i, s in
+                        row(s, idx: i)
+                            .id(i)
+                    }
+                }.padding(.horizontal, 22).padding(.vertical, 16)
+            }
+            .onChange(of: scrollTargetIndex) { _, newIndex in
+                if let newIndex {
+                    withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.90)) {
+                        proxy.scrollTo(newIndex, anchor: .center)
+                    }
                 }
-            }.padding(.horizontal, 22).padding(.vertical, 16)
+            }
         }
     }
 
@@ -103,8 +129,9 @@ struct TimeInputTableView: View {
                     .shadow(color: Forge.cipher.opacity(0.30), radius: 8)
             }
 
-            NeonTimeSlider(label: "FROM", minutes: Binding(get: { startB.get() }, set: { startB.set($0) }), accent: Forge.cipher)
-            NeonTimeSlider(label: "TO", minutes: Binding(get: { endB.get() }, set: { endB.set($0) }), accent: Forge.arcane)
+            NeonTimeSlider(label: "FROM", minutes: Binding(get: { startB.get() }, set: { startB.set($0) }), accent: Forge.cipher, sessionID: s.id, isStartSlider: true)
+
+            NeonTimeSlider(label: "TO", minutes: Binding(get: { endB.get() }, set: { endB.set($0) }), accent: Forge.arcane, sessionID: s.id, isStartSlider: false)
         }
         .padding(20)
         .background(
@@ -165,6 +192,6 @@ struct TimeInputTableView: View {
             let vm = TrackerViewModel()
             for i in 0..<3 { if let d = Calendar.current.date(byAdding: .day, value: i, to: Date()) { vm.toggleDate(d) } }
             return vm
-        }()).frame(width: 460).padding()
+        }(), scrollTargetIndex: .constant(nil)).frame(width: 460).padding()
     }.preferredColorScheme(.dark)
 }
