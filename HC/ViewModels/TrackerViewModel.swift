@@ -12,6 +12,7 @@
 //  ║    - Duration calculations (per-session & aggregate)         ║
 //  ║    - Calendar navigation (month forward/back)                ║
 //  ║    - Clipboard report string generation                       ║
+//  ║    - Gesture-driven actions (air-tap, slider adjustment)     ║
 //  ╚═══════════════════════════════════════════════════════════════╝
 //
 
@@ -28,8 +29,8 @@ class TrackerViewModel {
     /// All active work sessions, sorted chronologically.
     var sessions: [WorkSession] = []
 
-    /// Set of selected date components for O(1) lookup.
-    var selectedDates: Set<DateComponents> = []
+    /// Set of selected dates (start of day) for O(1) lookup.
+    var selectedDates: Set<Date> = []
 
     /// The currently displayed month in the calendar.
     var currentMonth: Date = Date()
@@ -48,25 +49,25 @@ class TrackerViewModel {
     /// Toggles a date's selection state. Selecting creates a new session
     /// with default 7:00-16:00 hours. Deselecting removes the session.
     func toggleDate(_ date: Date) {
-        let comps = calendar.dateComponents([.year, .month, .day], from: date)
+        let dayStart = calendar.startOfDay(for: date)
 
-        if selectedDates.contains(comps) {
-            selectedDates.remove(comps)
+        if selectedDates.contains(dayStart) {
+            selectedDates.remove(dayStart)
             sessions.removeAll {
-                calendar.dateComponents([.year, .month, .day], from: $0.date) == comps
+                calendar.startOfDay(for: $0.date) == dayStart
             }
         } else {
-            selectedDates.insert(comps)
-            let start = calendar.date(bySettingHour: 7, minute: 0, second: 0, of: date) ?? date
-            let end = calendar.date(bySettingHour: 16, minute: 0, second: 0, of: date) ?? date
-            sessions.append(WorkSession(date: date, startTime: start, endTime: end))
+            selectedDates.insert(dayStart)
+            let start = calendar.date(bySettingHour: 7, minute: 0, second: 0, of: dayStart) ?? dayStart
+            let end = calendar.date(bySettingHour: 16, minute: 0, second: 0, of: dayStart) ?? dayStart
+            sessions.append(WorkSession(date: dayStart, startTime: start, endTime: end))
             sessions.sort { $0.date < $1.date }
         }
     }
 
     /// Returns `true` if the given date is currently selected.
     func isSelected(_ date: Date) -> Bool {
-        selectedDates.contains(calendar.dateComponents([.year, .month, .day], from: date))
+        selectedDates.contains(calendar.startOfDay(for: date))
     }
 
     /// Returns `true` if the date falls on Saturday (7) or Sunday (1).
@@ -186,5 +187,39 @@ class TrackerViewModel {
         }
         while days.count % 7 != 0 { days.append(nil) }
         return days
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Gesture-Driven Actions
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Returns the date at a given grid index (used for air-tap hit testing).
+    func dateForGridIndex(_ index: Int) -> Date? {
+        let days = daysInMonth
+        guard index >= 0, index < days.count else { return nil }
+        return days[index]
+    }
+
+    /// Adjusts a session's start or end time by a delta in minutes, snapped to 15-min intervals.
+    func adjustSliderMinutes(sessionIndex: Int, isStartTime: Bool, delta: Int) {
+        guard sessionIndex >= 0, sessionIndex < sessions.count else { return }
+        let step = 15
+        if isStartTime {
+            let c = calendar.dateComponents([.hour, .minute], from: sessions[sessionIndex].startTime)
+            let cur = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+            let snapped = max(0, min(1440, ((cur + delta) / step) * step))
+            if let t = calendar.date(bySettingHour: snapped / 60, minute: snapped % 60, second: 0,
+                                      of: sessions[sessionIndex].date) {
+                sessions[sessionIndex].startTime = t
+            }
+        } else {
+            let c = calendar.dateComponents([.hour, .minute], from: sessions[sessionIndex].endTime)
+            let cur = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+            let snapped = max(0, min(1440, ((cur + delta) / step) * step))
+            if let t = calendar.date(bySettingHour: snapped / 60, minute: snapped % 60, second: 0,
+                                      of: sessions[sessionIndex].date) {
+                sessions[sessionIndex].endTime = t
+            }
+        }
     }
 }
