@@ -3,15 +3,15 @@
 //  HC
 //
 //  ╔═══════════════════════════════════════════════════════════════╗
-//  ║  MIDNIGHT FORGE — Visual Foundation Layer                    ║
+//  ║  MIDNIGHT FORGE — Visual Foundation Layer                     ║
 //  ║                                                               ║
-//  ║  This file defines the entire color system ("Forge" palette) ║
+//  ║  This file defines the entire color system ("Forge" palette)  ║
 //  ║  and the multi-layered background composition:                ║
 //  ║    L0: Obsidian void                                          ║
-//  ║    L1: Retro-futuristic perspective grid                     ║
+//  ║    L1: Retro-futuristic perspective grid                      ║
 //  ║    L2: Three breathing aurora orbs                            ║
 //  ║    L3: Detailed ASCII dragon watermark                        ║
-//  ║    L4: CRT phosphor scanlines + sweep beam                   ║
+//  ║    L4: CRT phosphor scanlines + sweep beam                    ║
 //  ║    L5: Cinematic vignette                                     ║
 //  ║                                                               ║
 //  ║  Also provides the reusable GlassCard ViewModifier.           ║
@@ -28,28 +28,28 @@ import SwiftUI
 /// Every color in the app references this enum — no ad-hoc hex values.
 enum Forge {
 
-    // ── Foundations ──
-    static let obsidian     = Color(red: 0.027, green: 0.027, blue: 0.055)   // #07070E
-    static let abyss        = Color(red: 0.020, green: 0.020, blue: 0.043)   // #05050B
-    static let phantom      = Color(red: 0.075, green: 0.055, blue: 0.180)   // #130E2E
+    // ── Foundations (Deeper, Richer Cosmic Space Void) ──
+    static let obsidian     = Color(red: 0.008, green: 0.008, blue: 0.016)   // #020204
+    static let abyss        = Color(red: 0.004, green: 0.004, blue: 0.008)   // #010102
+    static let phantom      = Color(red: 0.016, green: 0.012, blue: 0.031)   // #040308
 
-    // ── Primary Accents ──
-    static let arcane       = Color(red: 0.545, green: 0.235, blue: 0.985)   // #8B3CFC
-    static let cipher       = Color(red: 0.024, green: 0.714, blue: 0.831)   // #06B6D4
-    static let supernova    = Color(red: 0.659, green: 0.333, blue: 0.969)   // #A855F7
+    // ── Primary Accents (Ultra-Vibrant Glowing Cyberpunk) ──
+    static let arcane       = Color(red: 0.52, green: 0.15, blue: 1.0)       // #8426FF (Electric Violet)
+    static let cipher       = Color(red: 0.0, green: 0.85, blue: 0.95)       // #00D8F2 (Hyper-Neon Cyan)
+    static let supernova    = Color(red: 1.0, green: 0.15, blue: 0.65)       // #FF26A6 (Vivid Neon Magenta)
 
-    // ── Signal Colors ──
-    static let ember        = Color(red: 0.961, green: 0.620, blue: 0.043)   // #F59E0B
-    static let crimson      = Color(red: 0.937, green: 0.267, blue: 0.267)   // #EF4444
+    // ── Signal Colors (Glowing Burning Fire) ──
+    static let ember        = Color(red: 1.0, green: 0.45, blue: 0.0)        // #FF7300 (Vivid Safety Orange)
+    static let crimson      = Color(red: 1.0, green: 0.15, blue: 0.25)       // #FF263F (Glowing Crimson Red)
 
-    // ── Terminal & Success ──
-    static let jade         = Color(red: 0.063, green: 0.725, blue: 0.506)   // #10B981
-    static let mint         = Color(red: 0.204, green: 0.827, blue: 0.600)   // #34D399
+    // ── Terminal & Success (Acid Jade/Mint) ──
+    static let jade         = Color(red: 0.0, green: 0.95, blue: 0.45)       // #00F273 (Electric Jade)
+    static let mint         = Color(red: 0.1, green: 0.98, blue: 0.65)       // #1AFFA6 (Glowing Neon Mint)
 
-    // ── Neutrals ──
-    static let frost        = Color(red: 0.886, green: 0.910, blue: 0.941)   // #E2E8F0
-    static let steel        = Color(red: 0.392, green: 0.455, blue: 0.545)   // #64748B
-    static let ash          = Color(red: 0.255, green: 0.298, blue: 0.369)   // #414C5E
+    // ── Neutrals (Premium Metallic Steel) ──
+    static let frost        = Color(red: 0.94, green: 0.96, blue: 0.99)       // #F0F5FC (Luminous Ice)
+    static let steel        = Color(red: 0.48, green: 0.54, blue: 0.64)       // #7A8AA3 (Chrome Steel)
+    static let ash          = Color(red: 0.20, green: 0.24, blue: 0.30)       // #333D4D (Dark Charcoal)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -141,37 +141,48 @@ struct GlassmorphismBG: View {
 
     private var dragonWatermark: some View {
         let art: [String] = [
-            "                            _===~_  _~===_",
-            "                      _--^^#####//     \\#####^^--_",
-            "                   _-^##########// ( ) \\##########^-_",
-            "                  -############// |\\^^/| \\############-",
-            "                _/############//  (o::o)  \\############\\_",
-            "               /#############((    \\//    ))#############\\",
-            "              -###############\\\\  (    )  //###############-",
-            "             -#################\\\\ / VV \\ //#################-",
-            "            -###################\\\\/    \\\\//###################-",
-            "           _#/|##########/\\######(  /\\  )######/\\##########|\\#_",
-            "          |/  |#/\\#/\\#/\\  \\#/\\##\\ |  | /##/\\#/ /\\#/\\#/\\#|  \\|",
-            "          `   |/  V  V `   V \\#\\| |  | |/#/ V  ` V  V  \\|   `",
-            "              `   `  `      ` / | |  | | \\ `     `  `   `",
-            "                              (  | |  | |  )",
-            "                             __\\ | |  | | /__",
-            "                            (vvv(VVV)(VVV)vvv)"
+            "  +--------------------------------------------------------+",
+            "  | [SYSTEM: MIDNIGHT_DRAGON]                 [SECTOR: 09] |",
+            "  +--------------------------------------------------------+",
+            "  |                                                        |",
+            "  |               _===~_  _~===_                           |",
+            "  |         _--^^#####//     \\#####^^--_                  |",
+            "  |      _-^##########// ( ) \\##########^-_               |",
+            "  |     -############// |\\^^/| \\############-            |",
+            "  |   _/############//  (o::o)  \\############\\_          |",
+            "  |  /#############((    \\//    ))#############\\         |",
+            "  | -###############\\\\  (    )  //###############-       |",
+            "  |-#################\\\\ / VV \\ //#################-     |",
+            "  |-###################\\\\/    \\\\//###################- |",
+            "  |_#/|##########/\\######(  /\\  )######/\\##########|\\#_|",
+            "  ||/  |#/\\#/\\#/\\  \\#/\\##\\ |  | /##/\\#/ /\\#/\\#/\\#|\\|     |",
+            "  |`   |/  V  V `   V \\#\\| |  | |/#/ V  ` V  V  \\|   `  |",
+            "  |    `   `  `      ` / | |  | | \\ `     `  `   `        |",
+            "  |                    (  | |  | |  )                      |",
+            "  |                   __\\ | |  | | /__                    |",
+            "  |                  (vvv(VVV)(VVV)vvv)                    |",
+            "  |                                                        |",
+            "  +--------------------------------------------------------+",
+            "  | [BLUEPRINT v2.0]        [CORE_CORE]       [SCALE: 100] |",
+            "  +--------------------------------------------------------+"
         ]
         return VStack {
             Spacer()
             HStack {
                 Spacer()
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(art.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                            .font(.system(size: 5.5, weight: .light, design: .monospaced))
+                    ForEach(Array(art.enumerated()), id: \.offset) { i, line in
+                        Group {
+                            if i >= 4 && i <= 19 {
+                                DragonArtRenderer.tokenizeDragonLine(line, row: i - 4, pulse: Double(breathe))
+                            } else {
+                                DragonArtRenderer.tokenizeBorderLine(line)
+                            }
+                        }
+                        .font(.system(size: 5.5, weight: .light, design: .monospaced))
                     }
                 }
-                .foregroundStyle(
-                    LinearGradient(colors: [Forge.arcane.opacity(0.04), Forge.ember.opacity(0.03), Forge.cipher.opacity(0.02)],
-                                   startPoint: .top, endPoint: .bottom)
-                )
+                .opacity(0.06)
                 .padding(.trailing, 24).padding(.bottom, 16)
             }
         }
@@ -244,3 +255,188 @@ extension View {
 }
 
 #Preview { GlassmorphismBG().preferredColorScheme(.dark) }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MARK: - Dragon Art Renderer & Color Interpolation Utilities
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+struct DragonArtRenderer {
+    static func getDragonCharColor(char: Character, row: Int, col: Int, pulse: Double = 0.5) -> Color {
+        if char == " " {
+            return Forge.steel.opacity(0.12)
+        }
+        
+        // Glowing Eyes in Row 4
+        if row == 4 && (char == "o" || char == ":") {
+            return Color.interpolate(from: Forge.crimson, to: Forge.supernova, fraction: pulse)
+        }
+        
+        // Glowing Core in Row 7
+        if row == 7 && char == "V" {
+            return Color.interpolate(from: Forge.ember, to: Forge.supernova, fraction: pulse)
+        }
+        
+        // Claws/Talons
+        if row == 15 && char == "V" {
+            return Forge.supernova
+        }
+        if row == 15 && char == "v" {
+            return Forge.steel
+        }
+        
+        // Body Scales '#' with vertical gradient
+        if char == "#" {
+            let ratio = Double(row) / 15.0
+            if ratio < 0.3 {
+                return Color.interpolate(from: Forge.cipher, to: Forge.jade, fraction: ratio / 0.3)
+            } else if ratio < 0.7 {
+                return Color.interpolate(from: Forge.jade, to: Forge.arcane, fraction: (ratio - 0.3) / 0.4)
+            } else {
+                return Color.interpolate(from: Forge.arcane, to: Forge.ember, fraction: (ratio - 0.7) / 0.3)
+            }
+        }
+        
+        // Horns / Crown in Row 0
+        if row == 0 && (char == "=" || char == "~" || char == "_") {
+            return Forge.supernova
+        }
+        
+        if char == "/" || char == "\\" {
+            return Forge.arcane.opacity(0.8)
+        }
+        
+        if char == "(" || char == ")" {
+            return Forge.cipher.opacity(0.8)
+        }
+        
+        return Forge.steel.opacity(0.6)
+    }
+    
+    static func tokenizeDragonLine(_ line: String, row: Int, pulse: Double = 0.5) -> some View {
+        var middle = line
+        var prefixText = ""
+        var suffixText = ""
+        
+        if middle.hasPrefix("  | ") {
+            prefixText = "  | "
+            middle.removeFirst(4)
+        } else if middle.hasPrefix("  |") {
+            prefixText = "  |"
+            middle.removeFirst(3)
+        }
+        
+        if middle.hasSuffix(" |") {
+            suffixText = " |"
+            middle.removeLast(2)
+        } else if middle.hasSuffix("|") {
+            suffixText = "|"
+            middle.removeLast(1)
+        }
+        
+        return HStack(spacing: 0) {
+            if !prefixText.isEmpty {
+                Text(prefixText).foregroundColor(Forge.steel.opacity(0.3))
+            }
+            
+            // Build the middle tokenized text
+            Self.buildTokenizedText(middle, row: row, pulse: pulse)
+            
+            if !suffixText.isEmpty {
+                Text(suffixText).foregroundColor(Forge.steel.opacity(0.3))
+            }
+        }
+    }
+    
+    static func buildTokenizedText(_ text: String, row: Int, pulse: Double) -> some View {
+        var segments: [(String, Color)] = []
+        var currentGroup = ""
+        var currentColor: Color? = nil
+        
+        for (col, char) in text.enumerated() {
+            let charColor = self.getDragonCharColor(char: char, row: row, col: col, pulse: pulse)
+            if let activeColor = currentColor {
+                if activeColor == charColor {
+                    currentGroup.append(char)
+                } else {
+                    segments.append((currentGroup, activeColor))
+                    currentGroup = String(char)
+                    currentColor = charColor
+                }
+            } else {
+                currentGroup = String(char)
+                currentColor = charColor
+            }
+        }
+        
+        if !currentGroup.isEmpty, let activeColor = currentColor {
+            segments.append((currentGroup, activeColor))
+        }
+        
+        return HStack(spacing: 0) {
+            ForEach(0..<segments.count, id: \.self) { idx in
+                Text(segments[idx].0).foregroundColor(segments[idx].1)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    static func tokenizeBorderLine(_ line: String) -> some View {
+        if line.contains("SYSTEM: MIDNIGHT_DRAGON") {
+            HStack(spacing: 0) {
+                Text("  | ").foregroundColor(Forge.steel.opacity(0.3))
+                Text("[").foregroundColor(Forge.steel.opacity(0.5))
+                Text("SYSTEM: ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("MIDNIGHT_DRAGON").foregroundColor(Forge.ember).bold()
+                Text("]").foregroundColor(Forge.steel.opacity(0.5))
+                Text("                 ").foregroundColor(.clear)
+                Text("[").foregroundColor(Forge.steel.opacity(0.5))
+                Text("SECTOR: ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("09").foregroundColor(Forge.jade).bold()
+                Text("]").foregroundColor(Forge.steel.opacity(0.5))
+                Text(" |").foregroundColor(Forge.steel.opacity(0.3))
+            }
+        } else if line.contains("BLUEPRINT") {
+            HStack(spacing: 0) {
+                Text("  | ").foregroundColor(Forge.steel.opacity(0.3))
+                Text("[").foregroundColor(Forge.steel.opacity(0.5))
+                Text("BLUEPRINT ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("v2.1").foregroundColor(Forge.supernova).bold()
+                Text("]").foregroundColor(Forge.steel.opacity(0.5))
+                Text("        ").foregroundColor(.clear)
+                Text("[").foregroundColor(Forge.steel.opacity(0.5))
+                Text("CORE_CORE").foregroundColor(Forge.jade).bold()
+                Text("]").foregroundColor(Forge.steel.opacity(0.5))
+                Text("       ").foregroundColor(.clear)
+                Text("[").foregroundColor(Forge.steel.opacity(0.5))
+                Text("SCALE: ").foregroundColor(Forge.steel.opacity(0.5))
+                Text("100%").foregroundColor(Forge.cipher).bold()
+                Text("]").foregroundColor(Forge.steel.opacity(0.5))
+                Text(" |").foregroundColor(Forge.steel.opacity(0.3))
+            }
+        } else {
+            Text(line).foregroundColor(Forge.steel.opacity(0.35))
+        }
+    }
+}
+
+extension Color {
+    static func interpolate(from color1: Color, to color2: Color, fraction: Double) -> Color {
+        #if canImport(UIKit)
+        let uiColor1 = UIColor(color1)
+        let uiColor2 = UIColor(color2)
+        var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+        var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+        uiColor1.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+        uiColor2.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+        
+        let r = r1 + (r2 - r1) * CGFloat(fraction)
+        let g = g1 + (g2 - g1) * CGFloat(fraction)
+        let b = b1 + (b2 - b1) * CGFloat(fraction)
+        let a = a1 + (a2 - a1) * CGFloat(fraction)
+        
+        return Color(red: Double(r), green: Double(g), blue: Double(b), opacity: Double(a))
+        #else
+        return color1
+        #endif
+    }
+}
