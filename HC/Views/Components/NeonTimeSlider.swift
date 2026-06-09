@@ -25,16 +25,28 @@ struct NeonTimeSlider: View {
     /// Track and thumb accent color.
     var accent: Color = Forge.cipher
 
-    // Optional properties for geometry reporting
+    /// Optional session identifier for geometry frame reporting.
+    /// When non-nil, the slider reports its global frame via `SliderFramesKey`
+    /// so the gesture system can map air-drags to the correct slider.
     var sessionID: UUID? = nil
+
+    /// Distinguishes FROM vs TO sliders for the same session in frame reports.
     var isStartSlider: Bool = true
 
-    // ── Configuration ──
+    // ── Configuration ────────────────────────────────────────
+
+    /// Snap interval in minutes. Each drag increment jumps by this amount.
     private let step = 15
+
+    /// Valid range in total minutes from midnight (0 = 00:00, 1440 = 24:00).
     private let range = 0...1440
 
-    // ── State ──
+    // ── Interaction State ────────────────────────────────────
+
+    /// Whether the user is actively dragging the slider thumb.
     @State private var dragging = false
+
+    /// Pre-warmed haptic generator for near-zero-latency snap feedback.
     private let haptic = UIImpactFeedbackGenerator(style: .light)
 
     var body: some View {

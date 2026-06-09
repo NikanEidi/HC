@@ -2,10 +2,15 @@
 //  TimesheetPreferenceKeys.swift
 //  HC
 //
-//  SwiftUI PreferenceKeys used by TimeInputTableView to report
-//  geometry frames for the COPY button and time sliders up
-//  the view hierarchy. Consumed by parent views for gesture
-//  hit-testing and hover glow effects.
+//  ╔═══════════════════════════════════════════════════════════════╗
+//  ║  GEOMETRY FRAME REPORTING KEYS                                ║
+//  ║                                                               ║
+//  ║  SwiftUI PreferenceKeys that bubble geometry frames up the    ║
+//  ║  view hierarchy. Consumed by TrackerHomeView to enable the    ║
+//  ║  gesture system to hit-test clicks and hover effects against  ║
+//  ║  calendar cells, COPY button, time sliders, and any other    ║
+//  ║  tappable UI elements.                                        ║
+//  ╚═══════════════════════════════════════════════════════════════╝
 //
 
 import SwiftUI

@@ -2,10 +2,20 @@
 //  GlitchFlipContainer.swift
 //  HC
 //
-//  3D glitch/shatter transition engine. Drives a three-phase animation:
-//  Phase 1 — Pre-distortion builds (chromatic split + noise).
-//  Phase 2 — The flip (rotation + peak glitch artifacts).
-//  Phase 3 — Settle (distortion fades to zero).
+//  ╔═══════════════════════════════════════════════════════════════╗
+//  ║  3D GLITCH / SHATTER TRANSITION ENGINE                       ║
+//  ║                                                               ║
+//  ║  Drives a three-phase animation between two child views:      ║
+//  ║    Phase 1 — Pre-distortion build (chromatic split + noise)   ║
+//  ║    Phase 2 — The flip (rotation + peak glitch artifacts)      ║
+//  ║    Phase 3 — Settle (all distortion fades to zero)            ║
+//  ║                                                               ║
+//  ║  Visual FX layers:                                            ║
+//  ║    • Chromatic aberration (cyan/crimson offset rectangles)     ║
+//  ║    • Horizontal slice displacement (8 strips)                 ║
+//  ║    • Scan-noise overlay (40 randomized strips)                ║
+//  ║    • Heavy haptic impact at rotation midpoint                 ║
+//  ╚═══════════════════════════════════════════════════════════════╝
 //
 
 import SwiftUI
@@ -14,18 +24,39 @@ import SwiftUI
 /// using a custom chromatic-aberration glitch effect.
 struct GlitchFlipContainer<Front: View, Back: View>: View {
 
+    /// External binding that triggers the flip animation on change.
     @Binding var isFlipped: Bool
+
+    /// Builder closure for the front-facing view (Calendar).
     let front: () -> Front
+
+    /// Builder closure for the back-facing view (Timesheet).
     let back: () -> Back
 
+    // ── Animation State ─────────────────────────────────────────
+
+    /// Current Y-axis rotation angle in degrees (0 = front, 180 = back).
     @State private var rotation: Double = 0
+
+    /// Glitch intensity multiplier (0 = clean, 1 = full distortion).
     @State private var glitch: CGFloat = 0
+
+    /// Scan-noise overlay opacity multiplier.
     @State private var noise: CGFloat = 0
+
+    /// Chromatic aberration offset distance in points.
     @State private var split: CGFloat = 0
+
+    /// Per-slice horizontal displacement offsets (8 horizontal strips).
     @State private var offsets: [CGSize] = Array(repeating: .zero, count: 8)
+
+    /// Per-slice opacity values for the displacement strips.
     @State private var sliceAlpha: [CGFloat] = Array(repeating: 1, count: 8)
 
+    /// Total animation duration in seconds across all three phases.
     private let dur: Double = 0.55
+
+    /// Haptic generator pre-warmed before each flip for zero-latency impact.
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
 
     var body: some View {
@@ -73,8 +104,14 @@ struct GlitchFlipContainer<Front: View, Back: View>: View {
         .allowsHitTesting(false)
     }
 
-    // MARK: - Three-Phase Flip
+    // MARK: - Three-Phase Flip Animation
 
+    /// Orchestrates the three-phase glitch transition.
+    ///
+    /// Timeline (0.55s total):
+    /// - `0.00s–0.10s`: Pre-distortion build — ramp glitch/split/noise, scatter slices
+    /// - `0.10s–0.35s`: Core flip — rotate to target angle with peak artifacts
+    /// - `0.36s–0.55s`: Settle — all distortion animates back to zero
     private func flip(to flipped: Bool) {
         haptic.prepare()
 
@@ -99,6 +136,8 @@ struct GlitchFlipContainer<Front: View, Back: View>: View {
         }
     }
 
+    /// Randomizes horizontal slice offsets and opacity values to create
+    /// the characteristic "shattered glass" displacement effect.
     private func scatter() {
         for i in 0..<8 {
             offsets[i] = CGSize(width: .random(in: -22...22), height: .random(in: -3...3))

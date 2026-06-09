@@ -2,10 +2,20 @@
 //  TimeInputTableView.swift
 //  HC
 //
-//  Back card — Dynamic session rows with NeonTimeSliders.
-//  Each row displays an indexed date badge, duration gradient,
-//  and dual FROM/TO sliders. Forge palette throughout.
-//  Supports gesture hover glow on COPY button and slider frame reporting.
+//  ╔═══════════════════════════════════════════════════════════════╗
+//  ║  BACK CARD — Timesheet Session Editor                         ║
+//  ║                                                               ║
+//  ║  Dynamic session rows with dual NeonTimeSliders (FROM/TO).    ║
+//  ║  Each row displays:                                           ║
+//  ║    • Zero-padded index badge                                  ║
+//  ║    • Color-coded date (weekday=Arcane, weekend=Crimson)        ║
+//  ║    • Duration gradient readout                                ║
+//  ║    • Inline FROM/TO time sliders with haptic snapping          ║
+//  ║                                                               ║
+//  ║  Header COPY button exports the session report to clipboard   ║
+//  ║  with glow effect driven by the gesture hover system.         ║
+//  ║  Reports geometry frames for gesture hit-testing.             ║
+//  ╚═══════════════════════════════════════════════════════════════╝
 //
 
 import SwiftUI
@@ -15,8 +25,15 @@ import SwiftUI
 /// gradient total bar at the bottom.
 struct TimeInputTableView: View {
 
+    /// Reference to the shared ViewModel for session data and report generation.
     @Bindable var viewModel: TrackerViewModel
+
+    /// When true, the COPY button renders with an intensified Jade glow,
+    /// pulsing border, and 1.05x scale — driven by gesture hover proximity.
     var isCopyButtonGlowing: Bool = false
+
+    /// External binding for programmatic scroll. When set, the list scrolls
+    /// to the specified session index using an interactive spring animation.
     @Binding var scrollTargetIndex: Int?
 
     var body: some View {
@@ -29,8 +46,11 @@ struct TimeInputTableView: View {
         .glassCard(radius: 24, glow: Forge.cipher)
     }
 
-    // MARK: - Header
+    // MARK: - Header (Title + COPY Button)
 
+    /// Title bar with entry count and the clipboard COPY button.
+    /// The COPY button reports its frame via `CopyButtonFrameKey` and
+    /// `TappableFramesKey` for gesture system hit-testing.
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
@@ -76,8 +96,10 @@ struct TimeInputTableView: View {
         }
     }
 
-    // MARK: - Session List
+    // MARK: - Scrollable Session List
 
+    /// Vertical scroll view of session rows wrapped in a `ScrollViewReader`
+    /// for programmatic scroll-to-index from the gesture system.
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
@@ -98,8 +120,11 @@ struct TimeInputTableView: View {
         }
     }
 
-    // MARK: - Session Row
+    // MARK: - Individual Session Row
 
+    /// Renders a single session entry with index badge, date, duration,
+    /// and dual FROM/TO `NeonTimeSlider` instances bound to the ViewModel
+    /// via its `startMinutesBinding` / `endMinutesBinding` factories.
     private func row(_ s: WorkSession, idx: Int) -> some View {
         let startB = viewModel.startMinutesBinding(for: s.id)
         let endB = viewModel.endMinutesBinding(for: s.id)
@@ -142,8 +167,10 @@ struct TimeInputTableView: View {
         )
     }
 
-    // MARK: - Empty State
+    // MARK: - Empty State Placeholder
 
+    /// Displayed when no sessions exist. Guides the user to flip back
+    /// to the calendar view and select dates.
     private var empty: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -155,8 +182,10 @@ struct TimeInputTableView: View {
         }.frame(maxWidth: .infinity).padding(.vertical, 40)
     }
 
-    // MARK: - Total Bar
+    // MARK: - Gradient Total Bar
 
+    /// Sticky footer showing cumulative hours across all sessions.
+    /// Uses a Cipher→Arcane gradient for the large numeric readout.
     private var total: some View {
         HStack {
             HStack(spacing: 6) {
@@ -177,8 +206,9 @@ struct TimeInputTableView: View {
                                                  startPoint: .leading, endPoint: .trailing), lineWidth: 0.5)))
     }
 
-    // MARK: - Divider
+    // MARK: - Gradient Divider
 
+    /// Subtle horizontal gradient line separating header from content.
     private var dividerLine: some View {
         Rectangle().fill(LinearGradient(colors: [Forge.arcane.opacity(0.0), Forge.arcane.opacity(0.12), Forge.cipher.opacity(0.0)],
                                          startPoint: .leading, endPoint: .trailing)).frame(height: 0.5)

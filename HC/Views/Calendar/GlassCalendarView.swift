@@ -2,9 +2,19 @@
 //  GlassCalendarView.swift
 //  HC
 //
-//  Front card — Premium glass calendar with Forge palette.
-//  Weekends glow Ember/Crimson. Weekday selections glow Arcane/Cipher.
-//  Apple Pencil hover + air-gesture hover on every interactive element.
+//  ╔═══════════════════════════════════════════════════════════════╗
+//  ║  FRONT CARD — Premium Glass Calendar                          ║
+//  ║                                                               ║
+//  ║  Renders a month-view grid with multi-select capability.      ║
+//  ║  Color coding:                                                ║
+//  ║    • Weekday selections: Arcane/Cipher gradient border         ║
+//  ║    • Weekend selections: Crimson/Ember gradient border         ║
+//  ║    • Today: Cyan underline accent                             ║
+//  ║                                                               ║
+//  ║  Supports Apple Pencil hover + air-gesture hover glow on      ║
+//  ║  every interactive cell. Reports geometry frames for the       ║
+//  ║  gesture hit-testing pipeline via PreferenceKeys.              ║
+//  ╚═══════════════════════════════════════════════════════════════╝
 //
 
 import SwiftUI
@@ -14,13 +24,22 @@ import SwiftUI
 /// animated micro-interactions including gesture-driven hover glow.
 struct GlassCalendarView: View {
 
+    /// Reference to the shared ViewModel for date selection and navigation.
     @Bindable var viewModel: TrackerViewModel
+
+    /// Currently hovered date from the air-gesture system (passed by parent).
     var gestureHoveredDate: Date? = nil
 
+    /// Currently hovered date from Apple Pencil hover events.
     @State private var hovered: Date? = nil
+
+    /// Breathing pulse animation value (0–1) for subtle title glow.
     @State private var pulse: CGFloat = 0
 
+    /// Fixed weekday header labels (ISO 8601: Monday-first).
     private let headers = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+
+    /// 7-column flexible grid layout for the calendar days.
     private let grid = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
 
     var body: some View {
@@ -38,8 +57,9 @@ struct GlassCalendarView: View {
         }
     }
 
-    // MARK: - Navigation
+    // MARK: - Month Navigation Bar
 
+    /// Left/right chevrons + centered month-year title with animated glow underline.
     private var navigation: some View {
         HStack {
             navButton(icon: "chevron.left") { viewModel.previousMonth() }
@@ -61,6 +81,7 @@ struct GlassCalendarView: View {
         }
     }
 
+    /// Creates a circular chevron navigation button with haptic feedback.
     private func navButton(icon: String, action: @escaping () -> Void) -> some View {
         Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); action() }) {
             Image(systemName: icon)
@@ -73,8 +94,9 @@ struct GlassCalendarView: View {
         }.hoverEffect(.lift)
     }
 
-    // MARK: - Weekday Row
+    // MARK: - Weekday Header Row
 
+    /// Horizontal row of MON–SUN labels. Weekend columns use crimson tint.
     private var weekRow: some View {
         HStack(spacing: 0) {
             ForEach(headers, id: \.self) { d in
@@ -86,8 +108,10 @@ struct GlassCalendarView: View {
         }
     }
 
-    // MARK: - Day Grid
+    // MARK: - Day Cell Grid
 
+    /// 7-column LazyVGrid of interactive day cells with geometry reporting
+    /// for the air-gesture hit-testing system.
     private var dayGrid: some View {
         LazyVGrid(columns: grid, spacing: 7) {
             ForEach(Array(viewModel.daysInMonth.enumerated()), id: \.offset) { index, date in
@@ -104,8 +128,15 @@ struct GlassCalendarView: View {
         })
     }
 
-    // MARK: - Day Cell
+    // MARK: - Individual Day Cell
 
+    /// Renders a single day cell with 6 visual states:
+    /// 1. Default — near-transparent fill
+    /// 2. Selected weekday — Arcane/Cipher gradient border + Cipher text
+    /// 3. Selected weekend — Crimson/Ember gradient border + Ember text
+    /// 4. Today (unselected) — Cyan underline capsule
+    /// 5. Gesture-hovered — Cipher border glow + 1.02x scale
+    /// 6. Pencil-hovered — subtle white tint background
     @ViewBuilder private func cell(_ date: Date) -> some View {
         let sel = viewModel.isSelected(date)
         let wknd = viewModel.isWeekend(date)
@@ -163,8 +194,9 @@ struct GlassCalendarView: View {
         .onHover { h in withAnimation(.easeOut(duration: 0.1)) { hovered = h ? date : nil } }
     }
 
-    // MARK: - Divider
+    // MARK: - Gradient Divider
 
+    /// Subtle horizontal gradient line separating the header from the grid.
     private var dividerLine: some View {
         Rectangle()
             .fill(LinearGradient(colors: [Forge.arcane.opacity(0.0), Forge.cipher.opacity(0.12), Forge.arcane.opacity(0.0)],
@@ -172,8 +204,10 @@ struct GlassCalendarView: View {
             .frame(height: 0.5)
     }
 
-    // MARK: - Badge
+    // MARK: - Selection Count Badge
 
+    /// Animated capsule badge showing "[N] DAY(S)" selected count.
+    /// Enters with scale+opacity transition, exits with opacity fade.
     private var badge: some View {
         HStack(spacing: 6) {
             Text("[\(Text("\(viewModel.selectedDates.count)").foregroundColor(Forge.cipher))]")
