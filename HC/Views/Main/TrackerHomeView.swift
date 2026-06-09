@@ -3,37 +3,83 @@
 //  HC
 //
 //  ╔═══════════════════════════════════════════════════════════════╗
-//  ║  Root composition — Asymmetric split layout:                  ║
-//  ║    LEFT:  GlitchFlipContainer (Calendar <-> Timesheet)       ║
-//  ║    RIGHT: ANSI-styled Dragon Terminal with live data feed    ║
+//  ║  ROOT COMPOSITION — Asymmetric Split Layout                    ║
 //  ║                                                               ║
-//  ║  Forge palette. Apple Pencil hover. Full logic wired.        ║
+//  ║  Layout:                                                      ║
+//  ║    LEFT  — GlitchFlipContainer (Calendar ↔ Timesheet)         ║
+//  ║    RIGHT — ANSI-styled Dragon Terminal with live data feed    ║
+//  ║                                                               ║
+//  ║  Subsystems:                                                   ║
+//  ║    • GestureCursorOverlay: cursor rendering + hit-testing      ║
+//  ║    • TLine/TLineType: terminal line data models               ║
+//  ║    • PreferenceKey consumers: slider/calendar/button frames    ║
+//  ║                                                               ║
+//  ║  Forge palette. Apple Pencil hover. Full gesture wiring.      ║
 //  ╚═══════════════════════════════════════════════════════════════╝
 //
 
 import SwiftUI
 
+/// The root view of HC — orchestrates layout, gesture wiring,
+/// terminal rendering, and all PreferenceKey consumption.
 struct TrackerHomeView: View {
 
+    // ── Core State ───────────────────────────────────────────
+
+    /// The shared ViewModel ("Brain") driving all app state.
     @State private var vm = TrackerViewModel()
+
+    /// Front-camera gesture engine for hand tracking.
     @State private var gesture = HandGestureManager()
+
+    /// Whether the card panel is showing the back (Timesheet) face.
     @State private var flipped = false
+
+    /// Terminal line buffer for the right-side dragon console.
     @State private var lines: [TLine] = []
+
+    /// Cursor blink state for the terminal prompt.
     @State private var blink = true
+
+    /// Clipboard copy success toast visibility flag.
     @State private var toast = false
+
+    /// Running uptime counter in seconds (displayed in terminal).
     @State private var uptime = 0
+
+    /// Dragon ASCII art pulse value for animated eye/flame glow.
     @State private var dragonPulse: Double = 0.0
 
-    // ── Gesture-driven state ──
+    // ── Gesture-Driven State ─────────────────────────────────
+
+    /// Whether the COPY button is currently glowing from gesture hover.
     @State private var isCopyButtonGlowing = false
+
+    /// Calendar date currently being hovered by the air-gesture cursor.
     @State private var gestureHoveredDate: Date? = nil
+
+    /// ID of the tappable element currently under the gesture cursor.
     @State private var hoveredElementID: String? = nil
+
+    /// Global frame of the COPY button (from CopyButtonFrameKey).
     @State private var copyButtonFrame: CGRect = .zero
+
+    /// Global frame of the calendar grid (from CalendarGridFrameKey).
     @State private var calendarGridFrame: CGRect = .zero
+
+    /// Global frames of all visible time sliders (from SliderFramesKey).
     @State private var sliderFrames: [SliderFrameInfo] = []
+
+    /// Global frames of all tappable elements (from TappableFramesKey).
     @State private var tappableFrames: [TappableElement] = []
+
+    /// Click ripple animation trigger for the gesture cursor.
     @State private var clickRipple = false
+
+    /// Whether the front camera capture session is currently active.
     @State private var cameraActive = false
+
+    /// Index to programmatically scroll the timesheet list to.
     @State private var scrollTargetIndex: Int? = nil
     var body: some View {
         GeometryReader { geo in

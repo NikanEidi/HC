@@ -2,13 +2,22 @@
 //  HandGestureManager.swift
 //  HC
 //
-//  Silent front-camera gesture engine — AVFoundation + Vision.
-//
-//  RIGHT + LEFT hand. No mirror. Adaptive smoothing.
-//  Index finger = pointer. Thumb-index pinch = click.
-//
-//  Camera: VGA preset, beginConfiguration/commitConfiguration,
-//  proper orientation from UIWindowScene interface orientation.
+//  ╔═══════════════════════════════════════════════════════════════╗
+//  ║  FRONT-CAMERA GESTURE ENGINE                                  ║
+//  ║                                                               ║
+//  ║  Pipeline: AVFoundation → Vision → One-Euro Filter → UI State  ║
+//  ║                                                               ║
+//  ║  Gesture vocabulary:                                          ║
+//  ║    • Index finger tracking = screen pointer                    ║
+//  ║    • Thumb-index pinch    = click (with hysteresis)            ║
+//  ║    • Wrist rotation       = view flip trigger                 ║
+//  ║    • Directional swipes   = slider drag / list scroll          ║
+//  ║    • Hand depth (MCP)     = depth estimation                   ║
+//  ║                                                               ║
+//  ║  Supports both LEFT and RIGHT hands. No mirror mode.          ║
+//  ║  Camera: VGA preset, beginConfiguration/commitConfiguration.  ║
+//  ║  Orientation: Tracks UIWindowScene interface orientation.     ║
+//  ╚═══════════════════════════════════════════════════════════════╝
 //
 
 import AVFoundation
@@ -16,6 +25,10 @@ import Vision
 import Observation
 import UIKit
 
+/// Observable gesture engine that processes front-camera video frames
+/// through Apple’s Vision framework to extract hand pose landmarks.
+/// Publishes smoothed finger position, pinch detection, wrist flip,
+/// directional swipes, and hand depth as reactive state properties.
 @Observable
 final class HandGestureManager {
 
@@ -24,7 +37,10 @@ final class HandGestureManager {
     /// Smoothed index-finger position in screen-normalized coords.
     /// (0,0) = top-left, (1,1) = bottom-right.
     var fingerPosition: CGPoint = .zero
+    /// Whether any hand is currently being tracked by the Vision pipeline.
     var isTracking = false
+
+    /// Whether camera access has been authorized by the user.
     var isCameraAuthorized = false
 
     // ━━━━━ Public: Click (Thumb-Index Pinch) ━━━━━
@@ -36,17 +52,24 @@ final class HandGestureManager {
     /// True while thumb and index are pinched (finger "down").
     var isFingerDown = false
 
-    // ━━━━━ Public: Flip Gesture ━━━━━
+    // ━━━━━ Public: Flip Gesture (Wrist Rotation) ━━━━━
 
+    /// Momentarily set to `true` when a wrist flip is detected.
+    /// Consumed by `TrackerHomeView` to trigger the 3D card flip.
     var shouldSwitchView = false
 
-    // ━━━━━ Public: Swipe Deltas ━━━━━
+    // ━━━━━ Public: Directional Swipe Deltas ━━━━━
 
+    /// Horizontal velocity delta for slider adjustment (points/frame).
     var horizontalSliderDelta: CGFloat = 0
+
+    /// Vertical velocity delta for list scrolling (points/frame).
     var verticalScrollDelta: CGFloat = 0
 
-    // ━━━━━ Public: Depth ━━━━━
+    // ━━━━━ Public: Hand Depth Estimation ━━━━━
 
+    /// Estimated hand depth based on wrist-to-middleMCP distance.
+    /// Larger values = hand closer to camera.
     var handDepth: CGFloat = 0
 
     // ── Private: Session ──
@@ -134,6 +157,8 @@ final class HandGestureManager {
         }
     }
 
+    /// Begins the camera capture session on a background queue.
+    /// Safe to call multiple times — no-ops if already running.
     func startSession() {
         captureQueue.async { [weak self] in
             guard let self,
@@ -143,6 +168,7 @@ final class HandGestureManager {
         }
     }
 
+    /// Stops the camera capture session and resets tracking state.
     func stopSession() {
         captureQueue.async { [weak self] in
             self?.session?.stopRunning()
@@ -157,6 +183,7 @@ final class HandGestureManager {
     // MARK: - Camera Setup
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    /// Checks camera authorization status and configures capture if authorized.
     private func authorize() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
@@ -172,6 +199,8 @@ final class HandGestureManager {
         }
     }
 
+    /// Configures the AVCaptureSession with front camera input and video output.
+    /// Uses VGA preset for optimal performance with Vision hand pose detection.
     private func configure() {
         if let existing = session, existing.isRunning { return }
 
@@ -228,6 +257,9 @@ final class HandGestureManager {
     // MARK: - Vision Pipeline
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    /// Processes a single video frame through the Vision hand pose pipeline.
+    /// Dispatches detected landmarks to `processHand(_:)` or triggers
+    /// `handleHandLost()` when no hand is visible.
     private func analyze(_ buffer: CMSampleBuffer) {
         guard let px = CMSampleBufferGetImageBuffer(buffer) else { return }
 
@@ -266,6 +298,8 @@ final class HandGestureManager {
     // MARK: - Hand Lost
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    /// Resets all tracking state after consecutive frames without a visible hand.
+    /// Clears filters, gesture history, and dispatches UI state reset to main queue.
     private func handleHandLost() {
         framesWithoutHand += 1
         guard framesWithoutHand >= handLossThreshold else { return }
