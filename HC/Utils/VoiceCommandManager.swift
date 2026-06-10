@@ -432,7 +432,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             "hey vision", "hi vision", "hey visual", "hi visual",
             "hey reason", "hi reason", "high vixen", "hey switch", "hey system",
             "hay vision", "he vision", "heavy vision", "hi-vision", "hey-vision",
-            "hey listen", "hi listen", "hey prison", "hi prison", "open eyes", "open your eyes"
+            "hey listen", "hi listen", "hey prison", "hi prison", "open eyes", "open your eyes",
+            "hi vijin", "hey vijin", "hi vigen", "hey vigen", "hi vidjin", "hey vidjin",
+            "hi virgin", "hey virgin", "hi beacon", "hey beacon"
         ]
         
         let words = lowerText.split(separator: " ").map(String.init)
@@ -1480,6 +1482,10 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
     
     private func speakFallbackError() {
+        // STRICT GUARD: only speak fallbacks if there's an active vocal session (user has woken up the app).
+        // Prevents ambient background noise or background engine restarts from talking out loud in standby mode.
+        guard isActiveSession else { return }
+        
         let now = Date()
         if let lastTime = lastErrorSpeechTime, now.timeIntervalSince(lastTime) < errorCooldownSeconds {
             addLog("[SYS] Error response suppressed under cooldown.")
