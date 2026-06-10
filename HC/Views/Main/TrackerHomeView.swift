@@ -209,7 +209,7 @@ struct TrackerHomeView: View {
 
     private func cardPanel(_ geo: GeometryProxy) -> some View {
         VStack(spacing: 20) {
-            HStack(spacing: 14) { flipBtn; Spacer(); if flipped { exportBtn }; cameraToggleBtn; pill }
+            HStack(spacing: 14) { flipBtn; Spacer(); if flipped { exportBtn }; micToggleBtn; cameraToggleBtn; pill }
             GlitchFlipContainer(isFlipped: $flipped) {
                 GlassCalendarView(viewModel: vm, gestureHoveredDate: gestureHoveredDate)
             } back: {
@@ -377,6 +377,37 @@ struct TrackerHomeView: View {
         }
         .hoverEffect(.lift)
         .reportTappableFrame(id: "exportBtn")
+    }
+
+    private var micToggleBtn: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            if voiceManager.isListening {
+                voiceManager.stopListening()
+            } else {
+                voiceManager.startListening()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: voiceManager.isListening ? "mic.fill" : "mic.slash.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(voiceManager.isListening ? Forge.cipher : Forge.crimson)
+                    .symbolEffect(.pulse, options: .repeating, isActive: voiceManager.isListening)
+                Text(voiceManager.isListening ? "MIC ON" : "MIC OFF")
+                    .font(.system(size: 10, weight: .black, design: .monospaced)).tracking(1.5)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .foregroundColor(voiceManager.isListening ? Forge.cipher : Forge.crimson)
+            .padding(.horizontal, 16).padding(.vertical, 13)
+            .background(Capsule().fill((voiceManager.isListening ? Forge.cipher : Forge.crimson).opacity(0.04))
+                .overlay(Capsule().strokeBorder(
+                    (voiceManager.isListening ? Forge.cipher : Forge.crimson).opacity(0.15), lineWidth: 0.5))
+                .shadow(color: (voiceManager.isListening ? Forge.cipher : Forge.crimson).opacity(0.12), radius: 14))
+        }
+        .hoverEffect(.lift)
+        .reportTappableFrame(id: "micToggleBtn")
     }
 
     private var cameraToggleBtn: some View {
@@ -595,6 +626,12 @@ struct TrackerHomeView: View {
         }
 
         switch id {
+        case "micToggleBtn":
+            if voiceManager.isListening {
+                voiceManager.stopListening()
+            } else {
+                voiceManager.startListening()
+            }
         case "cameraToggleBtn":
             cameraActive.toggle()
             if cameraActive {

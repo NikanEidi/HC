@@ -58,7 +58,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     
-    private var isListening = false
+    @Published var isListening = false
     private var isActiveSession = false
     
     // ── Silence / Timeout Tasks ──
@@ -483,7 +483,8 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     
     private func containsCommandKeywords(_ lower: String) -> Bool {
         let keywords = [
-            "select", "remove", "delete", "deselect", "add", "set", "go to", "show",
+            "select", "choose", "pick", "highlight", "toggle", "mark", "tick",
+            "remove", "delete", "deselect", "clear", "add", "set", "go to", "show",
             "navigate", "switch", "open", "copy", "export", "from", "to", "till", "through",
             "today", "tomorrow", "yesterday", "jan", "feb", "mar", "apr", "may", "jun",
             "jul", "aug", "sep", "oct", "nov", "dec", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"
@@ -915,9 +916,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
         }
         
-        // Resolve pronouns ("it", "that", "them", "those", "these") to the last active sessions
+        // Resolve pronouns ("it", "that", "them", "those", "these", "other", "others") to the last active sessions
         let words = lower.split(separator: " ").map(String.init)
-        let hasPronoun = words.contains("it") || words.contains("that") || words.contains("them") || words.contains("those") || words.contains("these") || words.contains("this")
+        let hasPronoun = words.contains("it") || words.contains("that") || words.contains("them") || words.contains("those") || words.contains("these") || words.contains("this") || words.contains("other") || words.contains("others")
         if dates.isEmpty && hasPronoun {
             dates = lastSelectedDates
             if !dates.isEmpty {
@@ -949,7 +950,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 } else {
                     uniqueDates = [Calendar.current.startOfDay(for: Date())]
                 }
-            } else if fuzzyContains(lower, target: "select") || fuzzyContains(lower, target: "add") || fuzzyContains(lower, target: "mark") || fuzzyContains(lower, target: "toggle") {
+            } else if fuzzyContains(lower, target: "select") || fuzzyContains(lower, target: "add") || fuzzyContains(lower, target: "mark") || fuzzyContains(lower, target: "toggle") || fuzzyContains(lower, target: "choose") || fuzzyContains(lower, target: "pick") || fuzzyContains(lower, target: "highlight") || fuzzyContains(lower, target: "tick") {
                 if let hovered = hoveredDate {
                     uniqueDates = [Calendar.current.startOfDay(for: hovered)]
                 } else {
