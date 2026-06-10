@@ -66,6 +66,8 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     
     // ── Conversational Context & Memory ──
     private var lastSelectedDates: [Date] = []
+    private var lastErrorSpeechTime: Date? = nil
+    private let errorCooldownSeconds: TimeInterval = 4.0
     
     // ── Speech Synthesis Pipeline ──
     private let speechSynthesizer = AVSpeechSynthesizer()
@@ -76,6 +78,11 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     override init() {
         super.init()
         speechSynthesizer.delegate = self
+        setupAudioSessionObservers()
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
     
     /// Initializes the speech recognizer, requests system permissions,
@@ -187,6 +194,89 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
     }
     
+    func stopListening() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.isListening = false
+            self.stopAudioEngineOnly()
+            self.greetDelayTask?.cancel()
+            self.greetDelayTask = nil
+            self.silenceTask?.cancel()
+            self.silenceTask = nil
+            self.activeTimeoutTask?.cancel()
+            self.activeTimeoutTask = nil
+            self.addLog("[SYS] Voice Engine: Passive listening offline.")
+        }
+    }
+    
+    private func stopAudioEngineOnly() {
+        self.cancelCurrentRecognitionSession()
+        if let engine = self.audioEngine {
+            if engine.isRunning {
+                engine.stop()
+            }
+            engine.inputNode.removeTap(onBus: 0)
+        }
+        self.audioEngine = nil
+    }
+    
+    private func setupAudioSessionObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioSessionInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMediaServicesWereReset),
+            name: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleAudioSessionInterruption(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            switch type {
+            case .began:
+                self.addLog("[SYS] Audio session interrupted. Pausing engine.")
+                self.stopAudioEngineOnly()
+            case .ended:
+                self.addLog("[SYS] Audio session interruption ended. Resuming engine.")
+                if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                    let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                    if options.contains(.shouldResume) {
+                        self.startListening()
+                    } else {
+                        self.startListening()
+                    }
+                } else {
+                    self.startListening()
+                }
+            @unknown default:
+                break
+            }
+        }
+    }
+    
+    @objc private func handleMediaServicesWereReset() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.addLog("[SYS] Media services reset. Re-initializing audio pipeline.")
+            self.audioEngine = nil
+            if self.isListening {
+                self.startListening()
+            }
+        }
+    }
+    
     private func cancelCurrentRecognitionSession() {
         requestHolder.request = nil
         
@@ -198,49 +288,66 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
     
     private func startNewRecognitionSession() {
-        // 1. Clear any active request to stop the tap thread appending to it
-        requestHolder.request = nil
+        // 1. Clear and cancel any existing session cleanly
+        cancelCurrentRecognitionSession()
         
-        // 2. Cancel and end any previous session cleanly
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        
-        recognitionRequest?.endAudio()
-        recognitionRequest = nil
-        
-        // 3. Verify hardware availability
+        // 2. Verify hardware availability
         guard let speechRecognizer = speechRecognizer, speechRecognizer.isAvailable else {
             addLog("[ERR] Speech recognition hardware offline.")
             return
         }
         
-        // 4. Instantiate a new request object
+        // 3. Instantiate a new request object with dictation and bias strings
         let newRequest = SFSpeechAudioBufferRecognitionRequest()
         newRequest.shouldReportPartialResults = true
+        newRequest.taskHint = .dictation
+        newRequest.requiresOnDeviceRecognition = false
+        newRequest.contextualStrings = [
+            "Vision", "Nik", "Timesheet", "Copy", "Select", "Remove", "Deselect", "Delete", "Add",
+            "Set", "Go to", "Show", "Navigate", "Switch", "Open", "Export", "Today", "Tomorrow", "Yesterday",
+            "Weekdays", "Weekends", "Calendar", "Grid", "Table", "January", "February", "March",
+            "April", "May", "June", "July", "August", "September", "October", "November", "December"
+        ]
         self.recognitionRequest = newRequest
         
-        // 5. Initialize the speech task
+        // 4. Initialize the speech task
         let task = speechRecognizer.recognitionTask(with: newRequest) { [weak self] result, error in
             guard let self = self else { return }
             
             Task { @MainActor in
+                var isFinal = false
+                
                 if let result = result {
                     let transcript = result.bestTranscription.formattedString
                     self.processTranscript(transcript)
+                    isFinal = result.isFinal
                 }
                 
                 if let error = error {
+                    isFinal = true
                     let nsError = error as NSError
                     // Code 301/203 are user/session cancellation codes, safe to ignore
                     if nsError.code != 301 && nsError.code != 203 {
                         self.addLog("[ERR] Speech recognizer error: \(error.localizedDescription)")
+                        self.speakFallbackError()
+                    }
+                }
+                
+                if isFinal {
+                    // Properly nullify and stop audio processing on this request
+                    if self.recognitionRequest === newRequest {
+                        self.requestHolder.request = nil
+                        self.recognitionRequest?.endAudio()
+                        self.recognitionRequest = nil
+                        self.recognitionTask?.cancel()
+                        self.recognitionTask = nil
                         
-                        // Stop buffer appending to this specific failed request
-                        if self.recognitionRequest === newRequest {
-                            self.requestHolder.request = nil
-                            self.recognitionRequest?.endAudio()
+                        // Attempt to restart session if we're still supposed to be listening
+                        if self.isListening && !self.isSynthesizerSpeaking {
+                            self.startNewRecognitionSession()
                         }
                     }
+                    
                     if let engine = self.audioEngine, !engine.isRunning {
                         self.startListening()
                     }
@@ -248,7 +355,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
         }
         
-        // 6. Store task and enable the audio tap to write to the request
+        // 5. Store task and enable the audio tap to write to the request
         self.recognitionTask = task
         self.requestHolder.request = newRequest
     }
@@ -265,7 +372,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         
         if !isActiveSession {
             // Passive Mode: Look for the wake word
-            if let wakeRange = findWakeWord(in: lowerText) {
+            if let wakeRange = findFuzzyWakeWord(in: lowerText) {
                 isActiveSession = true
                 systemStatus = "ACTIVE"
                 triggerHapticFeedback(.medium)
@@ -304,7 +411,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             greetDelayTask?.cancel()
             greetDelayTask = nil
             
-            if let wakeRange = findWakeWord(in: lowerText) {
+            if let wakeRange = findFuzzyWakeWord(in: lowerText) {
                 let commandPart = String(text.suffix(from: wakeRange.upperBound))
                 liveTranscript = commandPart.trimmingCharacters(in: .whitespacesAndNewlines)
             } else {
@@ -316,30 +423,57 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
     }
     
-    private func findWakeWord(in text: String) -> Range<String.Index>? {
-        let wakeWords = [
-            "hey vision", "hi vision", "hey visual", "hi visual",
-            "high vision", "hay vision", "he vision", "heavy vision",
-            "hi-vision", "hey-vision"
-        ]
-        for word in wakeWords {
-            if let range = text.range(of: word) {
-                return range
-            }
-        }
+    private func findFuzzyWakeWord(in text: String) -> Range<String.Index>? {
+        let lowerText = text.lowercased()
         
-        // Also fallback to "vision" alone if it's the very first word or preceded by a space
-        if let range = text.range(of: "vision") {
-            let startIdx = range.lowerBound
-            if startIdx == text.startIndex {
-                return range
-            } else {
-                let prevCharIdx = text.index(before: startIdx)
-                if text[prevCharIdx] == " " {
-                    return range
+        let candidates = [
+            "hey vision", "hi vision", "hey visual", "hi visual",
+            "hey reason", "hi reason", "high vixen", "hey switch", "hey system",
+            "hay vision", "he vision", "heavy vision", "hi-vision", "hey-vision",
+            "hey listen", "hi listen", "hey prison", "hi prison", "open eyes", "open your eyes"
+        ]
+        
+        let words = lowerText.split(separator: " ").map(String.init)
+        if words.isEmpty { return nil }
+        
+        // We try to match prefixes of 1, 2, or 3 words
+        for count in (1...min(3, words.count)).reversed() {
+            let prefix = words[0..<count].joined(separator: " ")
+            for candidate in candidates {
+                let sim = normalizedSimilarity(a: prefix, b: candidate)
+                if sim >= 0.72 {
+                    var wordIdx = 0
+                    var currentIdx = text.startIndex
+                    while currentIdx < text.endIndex && wordIdx < count {
+                        while currentIdx < text.endIndex && (text[currentIdx].isWhitespace || text[currentIdx].isPunctuation) {
+                            currentIdx = text.index(after: currentIdx)
+                        }
+                        if currentIdx >= text.endIndex { break }
+                        while currentIdx < text.endIndex && !text[currentIdx].isWhitespace && !text[currentIdx].isPunctuation {
+                            currentIdx = text.index(after: currentIdx)
+                        }
+                        wordIdx += 1
+                    }
+                    return text.startIndex..<currentIdx
                 }
             }
         }
+        
+        // Fallback: check for single word "vision" or "visual"
+        for singleTarget in ["vision", "visual"] {
+            if let range = lowerText.range(of: singleTarget) {
+                let startIdx = range.lowerBound
+                if startIdx == lowerText.startIndex {
+                    return range
+                } else {
+                    let prevCharIdx = lowerText.index(before: startIdx)
+                    if lowerText[prevCharIdx].isWhitespace || lowerText[prevCharIdx].isPunctuation {
+                        return range
+                    }
+                }
+            }
+        }
+        
         return nil
     }
     
@@ -351,7 +485,90 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             "jul", "aug", "sep", "oct", "nov", "dec", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"
         ]
         for kw in keywords {
-            if lower.contains(kw) {
+            if fuzzyContains(lower, target: kw) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    // Levenshtein & Fuzzy helpers
+    private func levenshtein(a: String, b: String) -> Int {
+        let aArray = Array(a.lowercased())
+        let bArray = Array(b.lowercased())
+        
+        if aArray.isEmpty { return bArray.count }
+        if bArray.isEmpty { return aArray.count }
+        
+        var matrix = Array(repeating: Array(repeating: 0, count: bArray.count + 1), count: aArray.count + 1)
+        
+        for i in 0...aArray.count {
+            matrix[i][0] = i
+        }
+        for j in 0...bArray.count {
+            matrix[0][j] = j
+        }
+        
+        for i in 1...aArray.count {
+            for j in 1...bArray.count {
+                if aArray[i - 1] == bArray[j - 1] {
+                    matrix[i][j] = matrix[i - 1][j - 1]
+                } else {
+                    matrix[i][j] = min(
+                        matrix[i - 1][j] + 1,
+                        matrix[i][j - 1] + 1,
+                        matrix[i - 1][j - 1] + 1
+                    )
+                }
+            }
+        }
+        return matrix[aArray.count][bArray.count]
+    }
+    
+    private func normalizedSimilarity(a: String, b: String) -> Double {
+        let dist = levenshtein(a: a, b: b)
+        let maxLen = max(a.count, b.count)
+        if maxLen == 0 { return 1.0 }
+        return 1.0 - (Double(dist) / Double(maxLen))
+    }
+    
+    private func fuzzyContains(_ text: String, target: String, threshold: Double = 0.7) -> Bool {
+        let lowerText = text.lowercased()
+        let lowerTarget = target.lowercased()
+        
+        if lowerText.contains(lowerTarget) { return true }
+        
+        let targetWords = lowerTarget.split(separator: " ").map(String.init)
+        let textWords = lowerText.split(separator: " ").map(String.init)
+        
+        if targetWords.isEmpty { return false }
+        
+        let windowSize = targetWords.count
+        if textWords.count < windowSize {
+            let sim = normalizedSimilarity(a: lowerText, b: lowerTarget)
+            let customThreshold: Double
+            if lowerTarget.count <= 3 {
+                customThreshold = 0.9
+            } else if lowerTarget.count <= 5 {
+                customThreshold = 0.75
+            } else {
+                customThreshold = threshold
+            }
+            return sim >= customThreshold
+        }
+        
+        for i in 0...(textWords.count - windowSize) {
+            let windowPhrase = textWords[i..<(i + windowSize)].joined(separator: " ")
+            let sim = normalizedSimilarity(a: windowPhrase, b: lowerTarget)
+            let customThreshold: Double
+            if lowerTarget.count <= 3 {
+                customThreshold = 0.9
+            } else if lowerTarget.count <= 5 {
+                customThreshold = 0.75
+            } else {
+                customThreshold = threshold
+            }
+            if sim >= customThreshold {
                 return true
             }
         }
@@ -580,7 +797,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             
         case .unknown(let command):
             addLog("[ERR] Directive unrecognized: \"\(command)\"")
-            speak(text: "Command sequence unrecognized, Nik. Please rephrase.")
+            speakFallbackError()
             return false
         }
     }
@@ -615,33 +832,33 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         let lower = command.lowercased()
         
         // 0. Switch UI views
-        if lower.contains("timesheet") || lower.contains("time sheet") || lower.contains("table") {
-            if lower.contains("switch") || lower.contains("show") || lower.contains("go to") || lower.contains("view") || lower.contains("display") || lower.contains("open") {
+        if fuzzyContains(lower, target: "timesheet") || fuzzyContains(lower, target: "time sheet") || fuzzyContains(lower, target: "table") {
+            if fuzzyContains(lower, target: "switch") || fuzzyContains(lower, target: "show") || fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "view") || fuzzyContains(lower, target: "display") || fuzzyContains(lower, target: "open") {
                 return .switchView(showTimesheet: true)
             }
         }
-        if lower.contains("calendar") || lower.contains("calander") || lower.contains("grid") {
-            if lower.contains("switch") || lower.contains("show") || lower.contains("go to") || lower.contains("view") || lower.contains("display") || lower.contains("open") {
+        if fuzzyContains(lower, target: "calendar") || fuzzyContains(lower, target: "calander") || fuzzyContains(lower, target: "grid") {
+            if fuzzyContains(lower, target: "switch") || fuzzyContains(lower, target: "show") || fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "view") || fuzzyContains(lower, target: "display") || fuzzyContains(lower, target: "open") {
                 return .switchView(showTimesheet: false)
             }
         }
         
         // 1. Camera activation
-        if lower.contains("open your eyes") || lower.contains("open eyes") {
+        if fuzzyContains(lower, target: "open your eyes") || fuzzyContains(lower, target: "open eyes") {
             return .activateCamera
         }
         
         // 2. Clipboard copy
-        if lower.contains("copy") || lower.contains("export") {
+        if fuzzyContains(lower, target: "copy") || fuzzyContains(lower, target: "export") {
             return .copyReport
         }
         
         // 3. Navigate month
         let months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
                       "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-        if lower.contains("go to") || lower.contains("show") || lower.contains("navigate") || lower.contains("switch to") {
+        if fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "show") || fuzzyContains(lower, target: "navigate") || fuzzyContains(lower, target: "switch to") {
             for monthName in months {
-                if lower.contains(monthName), let monthInt = monthIndex(for: monthName) {
+                if fuzzyContains(lower, target: monthName), let monthInt = monthIndex(for: monthName) {
                     let currentYear = Calendar.current.component(.year, from: Date())
                     var comps = DateComponents()
                     comps.year = currentYear
@@ -685,7 +902,8 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
         
         // Resolve pronouns ("it", "that", "them", "those", "these") to the last active sessions
-        let hasPronoun = lower.contains(" it") || lower.contains("that") || lower.contains("them") || lower.contains("those") || lower.contains("these") || lower.contains("this")
+        let words = lower.split(separator: " ").map(String.init)
+        let hasPronoun = words.contains("it") || words.contains("that") || words.contains("them") || words.contains("those") || words.contains("these") || words.contains("this")
         if dates.isEmpty && hasPronoun {
             dates = lastSelectedDates
             if !dates.isEmpty {
@@ -705,7 +923,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         if !uniqueDates.isEmpty {
             lastSelectedDates = uniqueDates
         } else if uniqueDates.isEmpty {
-            if lower.contains("remove") || lower.contains("delete") || lower.contains("deselect") || lower.contains("clear") {
+            if fuzzyContains(lower, target: "remove") || fuzzyContains(lower, target: "delete") || fuzzyContains(lower, target: "deselect") || fuzzyContains(lower, target: "clear") {
                 uniqueDates = lastSelectedDates
             } else if parseTimeRange(from: command) != nil {
                 if !lastSelectedDates.isEmpty {
@@ -717,7 +935,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 } else {
                     uniqueDates = [Calendar.current.startOfDay(for: Date())]
                 }
-            } else if lower.contains("select") || lower.contains("add") || lower.contains("mark") || lower.contains("toggle") {
+            } else if fuzzyContains(lower, target: "select") || fuzzyContains(lower, target: "add") || fuzzyContains(lower, target: "mark") || fuzzyContains(lower, target: "toggle") {
                 if let hovered = hoveredDate {
                     uniqueDates = [Calendar.current.startOfDay(for: hovered)]
                 } else {
@@ -732,7 +950,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
         
         if !uniqueDates.isEmpty {
-            if lower.contains("remove") || lower.contains("delete") || lower.contains("deselect") || lower.contains("clear") {
+            if fuzzyContains(lower, target: "remove") || fuzzyContains(lower, target: "delete") || fuzzyContains(lower, target: "deselect") || fuzzyContains(lower, target: "clear") {
                 return .removeDate(dates: uniqueDates)
             }
             
@@ -1203,14 +1421,38 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             
             let utterance = AVSpeechUtterance(string: text)
             
-            // Strictly filter for a Premium MALE English voice (en-US or en-GB)
             let voices = AVSpeechSynthesisVoice.speechVoices()
-            if let maleVoice = voices.first(where: { $0.language.hasPrefix("en") && $0.gender == .male }) {
-                utterance.voice = maleVoice
-            } else if let fallbackVoice = AVSpeechSynthesisVoice(language: "en-US") {
-                utterance.voice = fallbackVoice
+            
+            // Priority 1: Premium Male voice in US/GB English
+            var selectedVoice = voices.first(where: {
+                $0.gender == .male &&
+                ($0.language == "en-US" || $0.language == "en-GB") &&
+                $0.quality == .premium
+            })
+            
+            // Priority 2: Enhanced Male voice in US/GB English
+            if selectedVoice == nil {
+                selectedVoice = voices.first(where: {
+                    $0.gender == .male &&
+                    ($0.language == "en-US" || $0.language == "en-GB") &&
+                    $0.quality == .enhanced
+                })
             }
             
+            // Priority 3: Any Male English voice
+            if selectedVoice == nil {
+                selectedVoice = voices.first(where: {
+                    $0.gender == .male &&
+                    $0.language.hasPrefix("en")
+                })
+            }
+            
+            // Fallback: Default US English voice
+            if selectedVoice == nil {
+                selectedVoice = AVSpeechSynthesisVoice(language: "en-US")
+            }
+            
+            utterance.voice = selectedVoice
             utterance.rate = 0.52
             utterance.pitchMultiplier = 1.0
             
@@ -1223,6 +1465,26 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             self.speechSynthesizer.speak(utterance)
             self.addLog("[SYS] Vision: \"\(text)\"")
         }
+    }
+    
+    private func speakFallbackError() {
+        let now = Date()
+        if let lastTime = lastErrorSpeechTime, now.timeIntervalSince(lastTime) < errorCooldownSeconds {
+            addLog("[SYS] Error response suppressed under cooldown.")
+            return
+        }
+        lastErrorSpeechTime = now
+        
+        let badAssFallbacks = [
+            "Audio interference detected, repeat order Nik.",
+            "Command matrix unclear. Say again?",
+            "I didn't catch that frequency, Nik.",
+            "Neural net transmission degraded. Rephrase, Nik.",
+            "Sensors scrambled, Nik. Restate intent.",
+            "Vocal override unrecognized. Input new command stream."
+        ]
+        let randomPhrase = badAssFallbacks.randomElement() ?? "Audio interference detected, repeat order Nik."
+        speak(text: randomPhrase)
     }
     
     // MARK: - AVSpeechSynthesizerDelegate
