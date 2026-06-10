@@ -48,3 +48,7 @@ Package.resolved
 *.log
 *.tmp
 Thumbs.db
+
+# Secrets
+**/Secrets.swift
+

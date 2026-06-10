@@ -71,6 +71,11 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private var lastErrorSpeechTime: Date? = nil
     private let errorCooldownSeconds: TimeInterval = 4.0
     
+    // ── AI Brain Pipeline State ──
+    private var isRecordingToFile = false
+    private var audioFileForWriting: AVAudioFile?
+    private let commandAudioURL = FileManager.default.temporaryDirectory.appendingPathComponent("command.wav")
+    
     // ── Speech Synthesis Pipeline ──
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var isSynthesizerSpeaking = false
@@ -172,6 +177,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             
             inputNode.removeTap(onBus: 0)
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
+                guard let self = self else { return }
                 guard buffer.frameLength > 0 else { return }
                 
                 // Target-guard against mBuffers[0].mDataByteSize == 0 warnings in CoreAudio
@@ -180,7 +186,15 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                     guard bufferList.mBuffers.mDataByteSize > 0 else { return }
                 }
                 
-                self?.requestHolder.request?.append(buffer)
+                if self.isRecordingToFile {
+                    do {
+                        try self.audioFileForWriting?.write(from: buffer)
+                    } catch {
+                        // Realtime thread safety: suppress terminal output on write failure
+                    }
+                } else {
+                    self.requestHolder.request?.append(buffer)
+                }
             }
             
             engine.prepare()
@@ -367,8 +381,8 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
     private func processTranscript(_ text: String) {
-        // Discard microphone captures while synthesized output is active
-        guard !isSynthesizerSpeaking else { return }
+        // Discard microphone captures while synthesized output is active, recording to file, or processing
+        guard !isSynthesizerSpeaking && !isRecordingToFile && systemStatus != "PROCESSING" else { return }
         
         let lowerText = text.lowercased()
         
@@ -379,49 +393,18 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 systemStatus = "ACTIVE"
                 triggerHapticFeedback(.medium)
                 
-                // Get transcript payload following wake word
-                let commandPart = String(text.suffix(from: wakeRange.upperBound)).trimmingCharacters(in: .whitespacesAndNewlines)
+                addLog("[SYS] Wake word detected: \"\(text)\"")
                 
-                if !commandPart.isEmpty && containsCommandKeywords(commandPart.lowercased()) {
-                    // Direct command in the same breath
-                    addLog("[SYS] Voice Engine: ACTIVE. Parsing command stream...")
-                    liveTranscript = commandPart
-                    resetTimers()
-                    startSilenceTimer(seconds: 1.5)
-                } else {
-                    addLog("[SYS] Voice Engine: ACTIVE. Awaiting command...")
-                    liveTranscript = ""
-                    
-                    // Schedule greeting with a 600ms delay to see if more speech is appended
-                    greetDelayTask?.cancel()
-                    greetDelayTask = Task { @MainActor in
-                        do {
-                            try await Task.sleep(nanoseconds: 600_000_000)
-                            guard !Task.isCancelled else { return }
-                            self.speak(text: "Hey Nik, how can I help you today?")
-                        } catch {}
-                    }
-                    
-                    resetTimers()
-                    startSilenceTimer(seconds: 5.0)
-                }
+                // Cancel any pending greeting tasks
+                greetDelayTask?.cancel()
+                greetDelayTask = nil
+                
+                // Immediately stop local recognition request to save battery
+                cancelCurrentRecognitionSession()
+                
+                // Trigger wake vocal response. Upon completion, AVSpeechSynthesizerDelegate didFinish triggers recordCommandPayload()
+                self.speak(text: "Optical matrix online. You have the conn, Nik.")
             }
-        } else {
-            // Active Mode: Read command text, handle timeouts/silences
-            
-            // Cancel any pending greeting task if the user speaks
-            greetDelayTask?.cancel()
-            greetDelayTask = nil
-            
-            if let wakeRange = findFuzzyWakeWord(in: lowerText) {
-                let commandPart = String(text.suffix(from: wakeRange.upperBound))
-                liveTranscript = commandPart.trimmingCharacters(in: .whitespacesAndNewlines)
-            } else {
-                liveTranscript = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            
-            resetTimers()
-            startSilenceTimer(seconds: 1.2)
         }
     }
     
@@ -616,7 +599,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         systemStatus = "STANDBY"
         liveTranscript = ""
         resetTimers()
-        startNewRecognitionSession()
+        if isListening {
+            startNewRecognitionSession()
+        }
     }
     
     private func executeCommand() {
@@ -1506,17 +1491,22 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         speak(text: randomPhrase)
     }
     
-    // MARK: - AVSpeechSynthesizerDelegate
-    
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         let utteranceID = ObjectIdentifier(utterance)
         Task { @MainActor in
             guard let active = self.activeUtterance, ObjectIdentifier(active) == utteranceID else { return }
             self.isSynthesizerSpeaking = false
             self.activeUtterance = nil
-            self.startNewRecognitionSession()
-            self.resetTimers()
-            self.startSilenceTimer(seconds: 4.0)
+            
+            if self.isActiveSession && self.systemStatus == "ACTIVE" {
+                self.recordCommandPayload()
+            } else {
+                if self.isListening {
+                    self.startNewRecognitionSession()
+                }
+                self.resetTimers()
+                self.startSilenceTimer(seconds: 4.0)
+            }
         }
     }
     
@@ -1526,9 +1516,16 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             guard let active = self.activeUtterance, ObjectIdentifier(active) == utteranceID else { return }
             self.isSynthesizerSpeaking = false
             self.activeUtterance = nil
-            self.startNewRecognitionSession()
-            self.resetTimers()
-            self.startSilenceTimer(seconds: 4.0)
+            
+            if self.isActiveSession && self.systemStatus == "ACTIVE" {
+                self.recordCommandPayload()
+            } else {
+                if self.isListening {
+                    self.startNewRecognitionSession()
+                }
+                self.resetTimers()
+                self.startSilenceTimer(seconds: 4.0)
+            }
         }
     }
     
@@ -1580,6 +1577,279 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         let endStr = endMin == 0 ? "\(endHourNormalized) \(endPeriod)" : "\(endHourNormalized) \(endMin) \(endPeriod)"
         
         return "\(startStr) to \(endStr)"
+    }
+    
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - AI Brain Recording & Execution
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    private func recordCommandPayload() {
+        // Clear old file if exists
+        try? FileManager.default.removeItem(at: commandAudioURL)
+        
+        self.isRecordingToFile = true
+        self.systemStatus = "RECORDING"
+        self.addLog("[SYS] Audio matrix recording... Speak command now.")
+        
+        do {
+            let recordingFormat = audioEngine?.inputNode.outputFormat(forBus: 0) ?? AVAudioFormat(standardFormatWithSampleRate: 44100.0, channels: 1)!
+            self.audioFileForWriting = try AVAudioFile(forWriting: commandAudioURL, settings: recordingFormat.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        } catch {
+            self.addLog("[ERR] Failed to initialize audio file: \(error.localizedDescription)")
+            self.deactivateSession()
+            return
+        }
+        
+        // Schedule auto-stop after 5 seconds
+        Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self.finalizeCommandRecordingAndProcess()
+            }
+        }
+    }
+    
+    private func finalizeCommandRecordingAndProcess() {
+        self.isRecordingToFile = false
+        self.audioFileForWriting = nil // Closes the file
+        
+        self.systemStatus = "PROCESSING"
+        self.addLog("[SYS] Audio captured. Uplinking to AI Brain...")
+        
+        Task {
+            do {
+                // 1. Whisper Transcribe
+                let transcript = try await AIBrainManager.shared.transcribeAudio(fileURL: commandAudioURL)
+                await MainActor.run {
+                    self.addLog("[AI] Transcript: \"\(transcript)\"")
+                }
+                
+                // 2. Parse Intent with GPT-4o-mini
+                let currentMonthName = formatMonthNatural(viewModel?.currentMonth ?? Date())
+                
+                let df = DateFormatter()
+                df.dateFormat = "yyyy-MM-dd"
+                let todayStr = df.string(from: Date())
+                
+                let aiResponse = try await AIBrainManager.shared.parseIntent(
+                    transcript: transcript,
+                    currentMonthName: currentMonthName,
+                    todayDate: todayStr
+                )
+                
+                await MainActor.run {
+                    self.addLog("[AI] JSON Decoded -> Executing Ghost-Clicks... [OK]")
+                    self.executeAIIntent(aiResponse)
+                }
+            } catch {
+                await MainActor.run {
+                    self.addLog("[ERR] AI Brain failed: \(error.localizedDescription)")
+                    self.speakFallbackError()
+                    self.deactivateSession()
+                }
+            }
+        }
+    }
+    
+    private func executeAIIntent(_ response: AIIntentResponse) {
+        guard let vm = viewModel else { return }
+        
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        
+        // Parse dates
+        var parsedDates: [Date] = []
+        if let datesArray = response.dates {
+            for dateStr in datesArray {
+                if let d = df.date(from: dateStr) {
+                    parsedDates.append(Calendar.current.startOfDay(for: d))
+                }
+            }
+        }
+        
+        // Normalise pronouns / fallbacks if dates are empty
+        if parsedDates.isEmpty {
+            let actionText = response.action
+            if actionText == "remove" || actionText == "time_mutation" {
+                parsedDates = lastSelectedDates
+            } else {
+                if let hovered = hoveredDate {
+                    parsedDates = [Calendar.current.startOfDay(for: hovered)]
+                } else {
+                    parsedDates = [Calendar.current.startOfDay(for: Date())]
+                }
+            }
+        }
+        
+        if !parsedDates.isEmpty {
+            lastSelectedDates = parsedDates
+        }
+        
+        // Map action
+        let action = response.action
+        switch action {
+        case "select":
+            if parsedDates.isEmpty {
+                speakFallbackError()
+            } else {
+                for d in parsedDates {
+                    checkAndNavigateMonth(for: d)
+                    triggerRigidHaptic()
+                    withAnimation {
+                        vm.toggleDate(d)
+                    }
+                }
+                let dateStr = parsedDates.map { formatDateShort($0) }.joined(separator: ", ")
+                addLog("[OK] Highlighted dates: \(dateStr)")
+                if parsedDates.count == 1 {
+                    speak(text: "I have selected \(formatDateNatural(parsedDates[0])) for you.")
+                } else {
+                    speak(text: "I've highlighted those \(parsedDates.count) dates on your calendar, Nik.")
+                }
+            }
+            
+        case "remove":
+            if parsedDates.isEmpty {
+                speak(text: "No session active to apply the removal, Nik.")
+            } else {
+                var count = 0
+                for d in parsedDates {
+                    checkAndNavigateMonth(for: d)
+                    if vm.isSelected(d) {
+                        triggerRigidHaptic()
+                        withAnimation {
+                            vm.toggleDate(d)
+                        }
+                        count += 1
+                    }
+                }
+                if count > 0 {
+                    let dateStr = parsedDates.map { formatDateShort($0) }.joined(separator: ", ")
+                    addLog("[OK] Removed \(count) sessions: \(dateStr)")
+                    if count == 1 {
+                        speak(text: "Alright, I've cleared the session for \(formatDateNatural(parsedDates[0])).")
+                    } else {
+                        speak(text: "Done. I've cleared those \(count) sessions, Nik.")
+                    }
+                } else {
+                    speak(text: "None of those dates are currently active, Nik.")
+                }
+            }
+            
+        case "time_mutation":
+            guard let times = response.times, let startStr = times.start, let endStr = times.end else {
+                speakFallbackError()
+                break
+            }
+            
+            let startParts = startStr.split(separator: ":").map(String.init)
+            let endParts = endStr.split(separator: ":").map(String.init)
+            
+            guard startParts.count == 2, let startHour = Int(startParts[0]), let startMin = Int(startParts[1]),
+                  endParts.count == 2, let endHour = Int(endParts[0]), let endMin = Int(endParts[1]) else {
+                speakFallbackError()
+                break
+            }
+            
+            let start = startHour * 60 + startMin
+            let end = endHour * 60 + endMin
+            let startStrFormatted = formatTime(minutes: start)
+            let endStrFormatted = formatTime(minutes: end)
+            let timePhrase = formatTimeRangeNatural(start: start, end: end)
+            
+            if !parsedDates.isEmpty {
+                for date in parsedDates {
+                    checkAndNavigateMonth(for: date)
+                    if !vm.isSelected(date) {
+                        withAnimation {
+                            vm.toggleDate(date)
+                        }
+                    }
+                    triggerRigidHaptic()
+                    withAnimation {
+                        vm.updateSessionTimes(for: date, startMinutes: start, endMinutes: end)
+                    }
+                }
+                let dateStr = parsedDates.map { formatDateShort($0) }.joined(separator: ", ")
+                addLog("[OK] Set \(dateStr) from \(startStrFormatted) to \(endStrFormatted).")
+                if parsedDates.count == 1 {
+                    speak(text: "I've updated the hours for \(formatDateNatural(parsedDates[0])) to \(timePhrase).")
+                } else {
+                    speak(text: "I've updated those sessions to \(timePhrase) for you.")
+                }
+            } else {
+                speakFallbackError()
+            }
+            
+        case "navigate":
+            if let targetDate = parsedDates.first {
+                checkAndNavigateMonth(for: targetDate)
+                triggerRigidHaptic()
+                let monthName = formatMonthNatural(targetDate)
+                addLog("[OK] Calendar shifted to \(monthName).")
+                speak(text: "Shifting your calendar to \(monthName), Nik.")
+            } else {
+                speakFallbackError()
+            }
+            
+        case "camera":
+            if let value = response.value {
+                if value == "open" || value == "activate" {
+                    addLog("[SYS] Optical sensors engaged. Air-gesture tracking: ACTIVE.")
+                    triggerRigidHaptic()
+                    onActivateCamera?()
+                    speak(text: "Optical matrix online. You have the conn, Nik.")
+                } else {
+                    addLog("[SYS] Optical sensors disengaged. Air-gesture tracking: OFFLINE.")
+                    triggerRigidHaptic()
+                    onDeactivateCamera?()
+                    speak(text: "Optical matrix offline, Nik.")
+                }
+            } else {
+                speakFallbackError()
+            }
+            
+        case "switch_view":
+            if let value = response.value {
+                if value == "timesheet" || value == "table" {
+                    triggerRigidHaptic()
+                    onSwitchView?(true)
+                    speak(text: "Switching to timesheet panel, Nik.")
+                } else {
+                    triggerRigidHaptic()
+                    onSwitchView?(false)
+                    speak(text: "Switching to calendar panel, Nik.")
+                }
+            } else {
+                speakFallbackError()
+            }
+            
+        case "copy":
+            let report = vm.generateReportString()
+            if !report.isEmpty {
+                ClipboardManager.copy(report)
+                triggerRigidHaptic()
+                addLog("[OK] Clipboard exported.")
+                speak(text: "Clipboard exported successfully, Nik.")
+            } else {
+                addLog("[ERR] No session data available to export.")
+                speak(text: "Error: No session data available to export.")
+            }
+            
+        default:
+            speakFallbackError()
+        }
+        
+        deactivateSession()
+    }
+    
+    private func formatTime(minutes: Int) -> String {
+        let hour = minutes / 60
+        let min = minutes % 60
+        let period = hour >= 12 ? "PM" : "AM"
+        let normHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour)
+        return min == 0 ? "\(normHour) \(period)" : String(format: "%d:%02d %@", normHour, min, period)
     }
 }
 
