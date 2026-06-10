@@ -79,7 +79,7 @@ struct TimeInputTableView: View {
                     Text("COPY").font(.system(size: 10, weight: .black, design: .monospaced)).tracking(2)
                 }
                 .foregroundColor(Forge.jade)
-                .padding(.horizontal, 16).padding(.vertical, 10)
+                .frame(minWidth: 64, minHeight: 28)
                 .background(
                     Capsule().fill(Forge.jade.opacity(isCopyButtonGlowing ? 0.12 : 0.05))
                         .overlay(Capsule().strokeBorder(Forge.jade.opacity(isCopyButtonGlowing ? 0.35 : 0.12),
@@ -106,14 +106,18 @@ struct TimeInputTableView: View {
                 LazyVStack(spacing: 14) {
                     ForEach(Array(viewModel.sessions.enumerated()), id: \.element.id) { i, s in
                         row(s, idx: i)
-                            .id(i)
+                            .onAppear {
+                                scrollTargetIndex = i
+                            }
                     }
                 }.padding(.horizontal, 22).padding(.vertical, 16)
             }
             .onChange(of: scrollTargetIndex) { _, newIndex in
                 if let newIndex {
-                    withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.90)) {
-                        proxy.scrollTo(newIndex, anchor: .center)
+                    if newIndex >= 0 && newIndex < viewModel.sessions.count {
+                        withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.90)) {
+                            proxy.scrollTo(viewModel.sessions[newIndex].id, anchor: .center)
+                        }
                     }
                 }
             }
@@ -137,7 +141,7 @@ struct TimeInputTableView: View {
                     Text(String(format: "%02d", idx + 1))
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundColor(Forge.steel.opacity(0.3))
-                        .padding(.horizontal, 7).padding(.vertical, 4)
+                        .frame(minWidth: 22, minHeight: 18)
                         .background(RoundedRectangle(cornerRadius: 5).fill(Forge.frost.opacity(0.025)))
 
                     Circle().fill(wknd ? Forge.crimson : Forge.arcane).frame(width: 7, height: 7)

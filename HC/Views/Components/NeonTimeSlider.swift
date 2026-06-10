@@ -57,6 +57,7 @@ struct NeonTimeSlider: View {
                     .font(.system(size: 10, weight: .heavy, design: .monospaced))
                     .foregroundColor(Forge.steel)
                     .tracking(2.5)
+                    .frame(minWidth: 45, alignment: .leading)
 
                 Spacer()
 

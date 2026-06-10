@@ -1,6 +1,101 @@
 # Components Reference
 
-Detailed documentation for every SwiftUI component in HC.
+Detailed documentation for every SwiftUI component and utility in HC.
+
+---
+
+## VoiceCommandManager
+
+**File:** `Utils/VoiceCommandManager.swift`
+
+Continuous voice assistant that listens for a wake word, parses natural
+language commands via NLP/regex, executes ViewModel actions, and responds
+with text-to-speech.
+
+**Class:** `@MainActor class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate`
+
+**Published State:**
+- `liveTranscript: String` -- Current speech transcription text
+- `systemStatus: String` -- "STANDBY" or "ACTIVE"
+- `voiceLogs: [String]` -- Rolling log buffer (max 15 entries)
+- `isListening: Bool` -- Whether audio engine is running
+
+**External Wiring:**
+- `hoveredDate: Date?` -- Currently gesture-hovered date (for context)
+- `onActivateCamera: (() -> Void)?` -- Callback to enable gesture camera
+- `onDeactivateCamera: (() -> Void)?` -- Callback to disable gesture camera
+- `onSwitchView: ((Bool) -> Void)?` -- Callback to flip calendar/timesheet
+- `setup(viewModel:)` -- Initializes with ViewModel reference and requests permissions
+
+**Audio Pipeline:**
+- `AVAudioEngine` with input node tap (bus 0, 1024 buffer size)
+- `SFSpeechRecognizer` (en-US locale) with continuous recognition
+- Audio session: `.playAndRecord` mode with `.defaultToSpeaker` and `.duckOthers`
+- `SpeechRequestHolder` for thread-safe buffer bridging
+
+**Wake Word Detection:**
+- Candidates: "hey vision", "hi vision", and ~20 phonetic variants
+- Fuzzy matching via Levenshtein distance with 0.85 similarity threshold
+- Sliding window (1-3 words) across tokenized transcript
+
+**NLP Parser (`extractIntent`):**
+- Priority-ordered intent classification (switch view > camera > copy > bulk deselect > navigate month > dates > time)
+- Number preprocessing scoped to date parsing only
+- `NSDataDetector` for date entity extraction
+- Regex patterns for "day of month", "month day-list", day ranges
+- Relative date parsing (today, tomorrow, yesterday, next weekday)
+- Weekday pattern matching (weekdays, weekends, specific day names)
+- Implicit day extraction with AM/PM context filtering
+- Pronoun resolution to last selected dates
+- Time range parsing (duration, standard shift, range, single time)
+
+**TTS Engine:**
+- `AVSpeechSynthesizer` with cached premium male en-US/en-GB voice
+- Speech rate: 0.52, pitch multiplier: 1.0
+- Echo suppression: recognition cancelled during TTS playback
+- Delegate-based lifecycle for post-speech session restart
+
+**Timers:**
+- Silence timer: 2.5s (active mode), 2.0s (same-breath command), 5.0s (greeting wait), 4.0s (post-TTS)
+- Absolute timeout: 8s (returns to STANDBY)
+- Greeting delay: 600ms (cancelled if user speaks immediately)
+- Error cooldown: 8s (prevents repeated error messages)
+
+---
+
+## CommandIntent
+
+**File:** `Utils/VoiceCommandManager.swift`
+
+Enum representing parsed NLP intents from voice commands.
+
+**Cases:**
+
+| Case | Associated Values | Triggered By |
+|------|-------------------|--------------|
+| `selectDate` | `dates: [Date]` | "select", "add", "mark", "pick", "highlight" |
+| `removeDate` | `dates: [Date]` | "remove", "delete", "deselect", "unselect", "clear" |
+| `timeMutation` | `dates: [Date], startMinutes: Int, endMinutes: Int` | "set 9 to 5", "log 8 hours" |
+| `navigateMonth` | `targetMonth: Date` | "go to July", "show September" |
+| `activateCamera` | -- | "open your eyes", "open vision" |
+| `deactivateCamera` | -- | "close your eyes", "close vision" |
+| `copyReport` | -- | "copy", "export" |
+| `switchView` | `showTimesheet: Bool` | "show timesheet", "switch to calendar" |
+| `unknown` | `command: String` | Unrecognized input |
+
+---
+
+## SpeechRequestHolder
+
+**File:** `Utils/VoiceCommandManager.swift`
+
+Thread-safe container bridging the audio tap thread and the recognition request.
+
+**Class:** `final class SpeechRequestHolder: @unchecked Sendable`
+
+- Uses `NSLock` for synchronization
+- `request` property: get/set with lock guard
+- Allows the background audio tap to append PCM buffers without actor isolation violations
 
 ---
 
@@ -227,9 +322,9 @@ for the gesture hit-testing system.
 
 **File:** `Utils/HandGestureManager.swift`
 
-Front-camera gesture engine (580 lines) powered by AVFoundation and
-Apple's Vision framework. Tracks hand position and recognizes gestures
-for touchless UI interaction.
+Front-camera gesture engine powered by AVFoundation and Apple's Vision
+framework. Tracks hand position and recognizes gestures for touchless
+UI interaction.
 
 **State Properties:**
 - `indexFingerPosition: CGPoint` -- Filtered finger position in screen coords
@@ -243,7 +338,7 @@ for touchless UI interaction.
 
 | Gesture | Detection Method | Threshold |
 |---------|-----------------|-----------|
-| Pinch (click) | Thumb tip ↔ index tip distance | < distance threshold |
+| Pinch (click) | Thumb tip - index tip distance | < distance threshold |
 | Wrist rotation (flip) | Angle delta from `AngleSample` buffer | > rotation threshold |
 | Directional swipe | Index finger velocity + direction | > velocity threshold |
 | Hand depth (zoom) | Hand bounding box area relative to frame | Continuous |
@@ -304,26 +399,34 @@ and performs hit-testing against reported UI element frames.
 Root composition view with asymmetric 2-panel layout.
 
 **Left Panel (45% width, max 490pt):**
-- Top bar: Flip button + Export button + Status pill
+- Top bar: Flip button + Export button + Mic toggle + Camera toggle + Status pill
 - Body: GlitchFlipContainer (Calendar / Timesheet)
 
 **Right Panel (remaining width):**
-- Title bar: Traffic lights + "DRAGON-TERMINAL v3.0" + LIVE indicator
+- Title bar: Traffic lights + "DRAGON-TERMINAL v4.0" + LIVE indicator
 - Status bar: SYS | SESS | HRS | UP (live uptime counter)
 - Body: Scrollable terminal with ASCII dragon header
+- Voice status: Current voice engine state + transcript
+- Voice logs: Rolling assistant log entries
 - Prompt: `root@hc:~$` with blinking cursor
 
 **Terminal Content:**
 1. Dragon ASCII art header (ultra-detailed 30-row blueprint)
-2. System boot messages (6 modules, each with [OK] status)
-3. Work Session Report section (box-drawn borders)
-4. Per-session entries with [WD]/[WE] tags
-5. Total hours summary
-6. Blinking cursor prompt
+2. System boot messages (7 modules, each with [OK] status)
+3. Voice assistant status and transcript
+4. Voice assistant logs
+5. Work Session Report section (box-drawn borders)
+6. Per-session entries with [WD]/[WE] tags
+7. Total hours summary
+8. Blinking cursor prompt
 
 **Internal Types:**
 - `TLine` -- Terminal line model (content + type)
 - `TLineType` -- Line category enum for styling
+
+**Managed Objects:**
+- `@StateObject voiceCommandManager` -- Voice assistant lifecycle
+- `HandGestureManager` reference -- Gesture input state
 
 **Overlays:**
 - `GestureCursorOverlay` -- Gesture cursor + hit-testing layer

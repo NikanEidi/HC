@@ -15,17 +15,6 @@
 
 import SwiftUI
 
-// MARK: - Calendar Grid Frame
-
-/// Reports the global frame of the calendar day grid so parent views
-/// can map air-gesture coordinates to calendar cells.
-struct CalendarGridFrameKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
-    }
-}
-
 // MARK: - Copy Button Frame
 
 /// Reports the global frame of the COPY button so parent views

@@ -47,8 +47,13 @@ struct GlassCalendarView: View {
             navigation.padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 16)
             weekRow.padding(.horizontal, 20).padding(.bottom, 10)
             dividerLine.padding(.horizontal, 24)
-            dayGrid.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 20)
-            if !viewModel.selectedDates.isEmpty { badge.padding(.bottom, 20) }
+            dayGrid
+                .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 20)
+            
+            badge.padding(.bottom, 20)
+                .opacity(viewModel.selectedDates.isEmpty ? 0 : 1)
+                .scaleEffect(viewModel.selectedDates.isEmpty ? 0.85 : 1.0)
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: viewModel.selectedDates.isEmpty)
         }
         .glassCard(radius: 24, glow: Forge.arcane)
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: viewModel.selectedDates.count)
@@ -113,18 +118,44 @@ struct GlassCalendarView: View {
     /// 7-column LazyVGrid of interactive day cells with geometry reporting
     /// for the air-gesture hit-testing system.
     private var dayGrid: some View {
-        LazyVGrid(columns: grid, spacing: 7) {
-            ForEach(Array(viewModel.daysInMonth.enumerated()), id: \.offset) { index, date in
-                if let date {
-                    cell(date)
-                        .reportTappableFrame(id: "date_\(index)")
-                } else {
-                    Color.clear.frame(height: 54)
+        let days = viewModel.daysInMonth
+        let rowCount = (days.count + 6) / 7
+        return VStack(spacing: 7) {
+            ForEach(0..<rowCount, id: \.self) { rowIndex in
+                HStack(spacing: 6) {
+                    ForEach(0..<7, id: \.self) { colIndex in
+                        let index = rowIndex * 7 + colIndex
+                        if index < days.count {
+                            if let date = days[index] {
+                                cell(date, index: index)
+                            } else {
+                                Color.clear
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 54)
+                            }
+                        } else {
+                            Color.clear
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 54)
+                        }
+                    }
                 }
             }
         }
         .background(GeometryReader { geo in
-            Color.clear.preference(key: CalendarGridFrameKey.self, value: geo.frame(in: .global))
+            let w = (geo.size.width - 36) / 7.0
+            let frames = (0..<days.count).map { i -> TappableElement in
+                let r = i / 7
+                let c = i % 7
+                let rect = CGRect(
+                    x: geo.frame(in: .global).minX + CGFloat(c) * (w + 6),
+                    y: geo.frame(in: .global).minY + CGFloat(r) * 61, // 54 height + 7 spacing
+                    width: w,
+                    height: 54
+                )
+                return TappableElement(id: "date_\(i)", frame: rect)
+            }
+            Color.clear.preference(key: TappableFramesKey.self, value: frames)
         })
     }
 
@@ -137,7 +168,7 @@ struct GlassCalendarView: View {
     /// 4. Today (unselected) — Cyan underline capsule
     /// 5. Gesture-hovered — Cipher border glow + 1.02x scale
     /// 6. Pencil-hovered — subtle white tint background
-    @ViewBuilder private func cell(_ date: Date) -> some View {
+    @ViewBuilder private func cell(_ date: Date, index: Int) -> some View {
         let sel = viewModel.isSelected(date)
         let wknd = viewModel.isWeekend(date)
         let today = Calendar.current.isDateInToday(date)
@@ -185,6 +216,7 @@ struct GlassCalendarView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
             .frame(height: 54)
             .scaleEffect(sel ? 1.03 : (gh ? 1.02 : 1.0))
             .animation(.spring(response: 0.22, dampingFraction: 0.7), value: sel)

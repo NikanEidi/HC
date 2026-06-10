@@ -3,7 +3,8 @@
 > A cyberpunk-themed iPadOS work hour tracker built with SwiftUI and MVVM.
 > Featuring the **Forge** design system, ultra-detailed ASCII dragon art,
 > ANSI-styled terminal output, glassmorphism UI, glitch transitions,
-> hand gesture control via front camera, and full Apple Pencil support.
+> voice command control via speech recognition, hand gesture control via
+> front camera, and full Apple Pencil support.
 
 ![Platform](https://img.shields.io/badge/Platform-iPadOS-blue?style=flat-square)
 ![Swift](https://img.shields.io/badge/Swift-6.0-orange?style=flat-square)
@@ -23,11 +24,13 @@ The interface is split into two panels:
 - **Left**: A GlitchFlipContainer that transitions between a glass calendar
   and a timesheet with chromatic aberration + shatter effects.
 - **Right**: A live ANSI-styled terminal with ultra-detailed ASCII dragon header,
-  system boot sequence, and real-time session data.
+  system boot sequence, voice assistant status, and real-time session data.
 
-**v3.0** introduces **hand gesture control** -- the front-facing camera tracks
-your hand via Apple's Vision framework, enabling touchless navigation with
-pinch-to-click, wrist-rotation flip, directional swipes, and depth-based zoom.
+**v4.0** introduces a **voice command engine** -- a continuous speech
+assistant powered by Apple's Speech and NaturalLanguage frameworks.
+Say "Hey Vision" to activate, then speak natural language commands to
+select dates, set times, navigate months, copy reports, and more.
+The assistant responds with text-to-speech using a premium male voice.
 
 ---
 
@@ -35,10 +38,10 @@ pinch-to-click, wrist-rotation flip, directional swipes, and depth-based zoom.
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/ARCHITECTURE.md) | MVVM data flow, gesture pipeline, file map, design decisions |
-| [Design System](docs/DESIGN_SYSTEM.md) | Forge palette, GlassCard, dragon art, gesture cursor, typography |
-| [Components](docs/COMPONENTS.md) | Every SwiftUI component documented in detail |
-| [Setup](docs/SETUP.md) | Requirements, build instructions, usage guide |
+| [Architecture](docs/ARCHITECTURE.md) | MVVM data flow, voice pipeline, gesture pipeline, file map, design decisions |
+| [Design System](docs/DESIGN_SYSTEM.md) | Forge palette, GlassCard, dragon art, gesture cursor, voice UX, typography |
+| [Components](docs/COMPONENTS.md) | Every SwiftUI component and utility documented in detail |
+| [Setup](docs/SETUP.md) | Requirements, permissions, build instructions, usage guide |
 
 ---
 
@@ -64,6 +67,7 @@ pinch-to-click, wrist-rotation flip, directional swipes, and depth-based zoom.
 
 ## Features
 
+- **Voice Command Engine** -- Continuous speech assistant with wake word detection ("Hey Vision"), NLP intent parsing, date/time extraction, pronoun resolution, and text-to-speech responses
 - **Glass Calendar** -- Multi-date selection with crimson/ember weekends and arcane/cipher weekday highlights
 - **Custom Time Sliders** -- Frictionless neon sliders with haptic 15-min snap, triple-gradient track, glowing thumb
 - **Glitch Flip** -- 3D chromatic aberration + 8-slice shatter effect (0.55s, 3 phases)
@@ -76,9 +80,49 @@ pinch-to-click, wrist-rotation flip, directional swipes, and depth-based zoom.
 
 ---
 
+## Voice Command Engine
+
+HC v4.0 features a continuous voice assistant that listens passively for a
+wake word, then activates to parse and execute natural language commands.
+
+### Pipeline
+
+1. **Passive Listening** -- `SFSpeechRecognizer` runs continuously, monitoring for the wake word
+2. **Wake Word Detection** -- Fuzzy matching against "Hey Vision" / "Hi Vision" variants with 0.85 similarity threshold
+3. **Active Session** -- Greeting plays, silence timer starts, assistant awaits command
+4. **NLP Parsing** -- `extractIntent()` classifies the command via regex + keyword matching
+5. **Execution** -- ViewModel actions fire (date toggle, time mutation, month navigation, etc.)
+6. **TTS Response** -- `AVSpeechSynthesizer` speaks a contextual confirmation using a cached premium voice
+7. **Session End** -- After execution or timeout, returns to passive listening
+
+### Supported Commands
+
+| Command | Example | Action |
+|---------|---------|--------|
+| Select dates | "select today", "select the 5th through the 10th" | Toggles dates on calendar |
+| Deselect dates | "deselect today", "unselect the 5th", "remove the 8th" | Removes date selections |
+| Bulk deselect | "deselect all", "remove all", "clear all" | Removes all active sessions |
+| Set times | "set 9 to 5", "log 8 hours starting at 9 AM" | Updates session time range |
+| Navigate month | "go to July", "show September" | Navigates calendar to target month |
+| Switch view | "show timesheet", "switch to calendar" | Flips between calendar/timesheet |
+| Copy report | "copy", "export" | Copies formatted report to clipboard |
+| Camera on/off | "open your eyes", "close your eyes" | Toggles gesture camera |
+| Weekday patterns | "select weekdays", "select Mondays and Wednesdays" | Bulk date selection |
+| Relative dates | "select tomorrow", "select next Friday" | Relative date targeting |
+| Pronouns | "remove them", "set those to 9 to 5" | Resolves to last selected dates |
+
+### Audio Architecture
+
+- **Zero-gap session restart** -- New recognition request is swapped in before the old session tears down, ensuring no audio buffers are lost during session transitions
+- **Thread-safe buffer** -- `SpeechRequestHolder` uses `NSLock` to safely bridge the audio tap thread and the recognition request
+- **Echo suppression** -- Recognition session is cancelled during TTS playback to prevent the assistant from transcribing its own voice
+- **Error resilience** -- Transient recognizer errors (cancellation, no speech, network) are logged silently without speaking error messages
+
+---
+
 ## Hand Gesture Control
 
-HC v3.0 features a full gesture control system using the iPad's front-facing
+HC v3.0+ features a full gesture control system using the iPad's front-facing
 camera. The pipeline flows through four stages:
 
 1. **Capture** -- AVFoundation camera session captures frames at device framerate
@@ -92,7 +136,7 @@ camera. The pipeline flows through four stages:
 |---------|--------|
 | Index finger track | Cursor movement |
 | Pinch (thumb + index) | Click / tap |
-| Wrist rotation | Flip card (calendar ↔ timesheet) |
+| Wrist rotation | Flip card (calendar / timesheet) |
 | Directional swipe | Navigate calendar months |
 | Hand depth (distance) | Zoom / scale |
 
@@ -122,25 +166,30 @@ tracked hand position in real-time.
                              __\ | |  | | /__
                             (vvv(VVV)(VVV)vvv)
 
-  [SYS] Midnight Forge v3.0 -- 2026-06-09 14:00:00
+  [SYS] Midnight Forge v4.0 -- 2026-06-09 14:00:00
   [SYS] Calendar engine ............. [OK]
   [SYS] Haptic subsystem ............ [OK]
   [SYS] Clipboard bridge ............ [OK]
   [SYS] Pencil input ................ [OK]
   [SYS] Glitch renderer ............. [OK]
   [SYS] Gesture engine .............. [OK]
+  [SYS] Voice engine ................ [OK]
+
+  Voice: ACTIVE | Transcript: "select the fifth"
+  [SYS] Voice Engine: ACTIVE. Parsing command stream...
+  [SYS] Voice Input: "select the fifth"
+  [SYS] Ghost-click applied to day 5.
+  [SYS] Vision: "I have selected the 5th of June for you."
 
   +================================================+
   |            WORK SESSION REPORT                  |
   +================================================+
 
-  [WD] [01] 8 Jun: 07:00 --> 16:00
+  [WD] [01] 5 Jun: 07:00 --> 16:00
         Hour: 9:00
-  [WE] [02] 9 Jun: 04:30 --> 14:30
-        Hour: 10:00
 
   +------------------------------------------------+
-  | >>> Total Hours: 19:00
+  | >>> Total Hours: 9:00
   +------------------------------------------------+
 
 root@hc:~$ _
@@ -172,7 +221,8 @@ HC/
 |       +-- TimesheetPreferenceKeys.swift # PreferenceKey definitions for hit-testing
 +-- Utils/
     |-- ClipboardManager.swift        # UIPasteboard + haptic feedback
-    +-- HandGestureManager.swift      # Front-camera gesture engine (Vision + One-Euro)
+    |-- HandGestureManager.swift      # Front-camera gesture engine (Vision + One-Euro)
+    +-- VoiceCommandManager.swift     # Voice assistant (Speech + NLP + TTS)
 ```
 
 ---
@@ -202,6 +252,7 @@ Total Hours: 19:00
 - Xcode 16+
 - iOS / iPadOS 17.0+
 - Swift 6.0
+- Microphone access (required for voice command engine)
 - Front-facing camera (required for hand gesture control)
 
 ---

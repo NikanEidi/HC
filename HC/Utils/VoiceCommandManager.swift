@@ -11,6 +11,7 @@
 //  ║    - Multi-intent NLP regex date and time parser              ║
 //  ║    - Automatic silence & absolute timeout execution state    ║
 //  ║    - Tactile confirmation & cyberpunk terminal output         ║
+//  ║    - Backward-compatible iOS 16/17 record permission safety   ║
 //  ╚═══════════════════════════════════════════════════════════════╝
 //
 
@@ -69,12 +70,22 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // ── Conversational Context & Memory ──
     private var lastSelectedDates: [Date] = []
     private var lastErrorSpeechTime: Date? = nil
-    private let errorCooldownSeconds: TimeInterval = 4.0
+    private let errorCooldownSeconds: TimeInterval = 8.0
     
     // ── Speech Synthesis Pipeline ──
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var isSynthesizerSpeaking = false
     private var activeUtterance: AVSpeechUtterance?
+    private lazy var cachedVoice: AVSpeechSynthesisVoice? = {
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        return voices.first(where: {
+            $0.gender == .male && ($0.language == "en-US" || $0.language == "en-GB") && $0.quality == .premium
+        }) ?? voices.first(where: {
+            $0.gender == .male && ($0.language == "en-US" || $0.language == "en-GB") && $0.quality == .enhanced
+        }) ?? voices.first(where: {
+            $0.gender == .male && $0.language.hasPrefix("en")
+        }) ?? AVSpeechSynthesisVoice(language: "en-US")
+    }()
     private let requestHolder = SpeechRequestHolder()
     
     override init() {
@@ -100,33 +111,43 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     
     private func requestPermissions() {
         SFSpeechRecognizer.requestAuthorization { speechStatus in
-            AVAudioApplication.requestRecordPermission { micGranted in
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    
-                    // Log Speech Recognition status
-                    switch speechStatus {
-                    case .authorized:
-                        self.addLog("[SYS] Speech Recognition Matrix authorized.")
-                    case .denied, .restricted, .notDetermined:
-                        self.addLog("[SYS] Speech Recognition access denied/restricted.")
-                    @unknown default:
-                        break
+            if #available(iOS 17.0, *) {
+                AVAudioApplication.requestRecordPermission { micGranted in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.handlePermissionsResult(speechStatus: speechStatus, micGranted: micGranted)
                     }
-                    
-                    // Log Microphone status
-                    if micGranted {
-                        self.addLog("[SYS] Audio input sensor enabled.")
-                    } else {
-                        self.addLog("[SYS] Audio input sensor access denied.")
-                    }
-                    
-                    // Only start listening if both authorizations are granted
-                    if speechStatus == .authorized && micGranted {
-                        self.startListening()
+                }
+            } else {
+                AVAudioSession.sharedInstance().requestRecordPermission { micGranted in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.handlePermissionsResult(speechStatus: speechStatus, micGranted: micGranted)
                     }
                 }
             }
+        }
+    }
+    
+    private func handlePermissionsResult(speechStatus: SFSpeechRecognizerAuthorizationStatus, micGranted: Bool) {
+        // Log Speech Recognition status
+        switch speechStatus {
+        case .authorized:
+            self.addLog("[SYS] Speech Recognition Matrix authorized.")
+        case .denied, .restricted, .notDetermined:
+            self.addLog("[SYS] Speech Recognition access denied/restricted.")
+        @unknown default:
+            break
+        }
+        
+        // Log Microphone status
+        if micGranted {
+            self.addLog("[SYS] Audio input sensor enabled.")
+        } else {
+            self.addLog("[SYS] Audio input sensor access denied.")
+        }
+        
+        // Only start listening if both authorizations are granted
+        if speechStatus == .authorized && micGranted {
+            self.startListening()
         }
     }
     
@@ -139,8 +160,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             return
         }
         
-        // Dispatch to the main thread runloop to run audio setup synchronously,
-        // avoiding unsafeForcedSync warnings inside the cooperative thread pool.
+        // Dispatch to the main thread runloop to run audio setup safely
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let audioSession = AVAudioSession.sharedInstance()
@@ -157,14 +177,12 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
             guard let engine = self.audioEngine else { return }
             
-            // Stop and reset to completely clear any bad CoreAudio connection graphs
             engine.stop()
             engine.reset()
             
             let inputNode = engine.inputNode
             let recordingFormat = inputNode.outputFormat(forBus: 0)
             
-            // Guard format to avoid installing a tap with 0 channels
             guard recordingFormat.channelCount > 0, recordingFormat.sampleRate > 0 else {
                 self.addLog("[ERR] Audio hardware format has 0 channels.")
                 return
@@ -174,7 +192,6 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
                 guard buffer.frameLength > 0 else { return }
                 
-                // Target-guard against mBuffers[0].mDataByteSize == 0 warnings in CoreAudio
                 let bufferList = buffer.audioBufferList.pointee
                 if bufferList.mNumberBuffers > 0 {
                     guard bufferList.mBuffers.mDataByteSize > 0 else { return }
@@ -281,38 +298,42 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     
     private func cancelCurrentRecognitionSession() {
         requestHolder.request = nil
-        
         recognitionRequest?.endAudio()
         recognitionRequest = nil
-        
         recognitionTask?.cancel()
         recognitionTask = nil
     }
     
     private func startNewRecognitionSession() {
-        // 1. Clear and cancel any existing session cleanly
-        cancelCurrentRecognitionSession()
+        guard isListening else { return }
         
-        // 2. Verify hardware availability
         guard let speechRecognizer = speechRecognizer, speechRecognizer.isAvailable else {
             addLog("[ERR] Speech recognition hardware offline.")
             return
         }
         
-        // 3. Instantiate a new request object with dictation and bias strings
         let newRequest = SFSpeechAudioBufferRecognitionRequest()
         newRequest.shouldReportPartialResults = true
         newRequest.taskHint = .dictation
         newRequest.requiresOnDeviceRecognition = false
         newRequest.contextualStrings = [
-            "Vision", "Nik", "Timesheet", "Copy", "Select", "Remove", "Deselect", "Delete", "Add",
-            "Set", "Go to", "Show", "Navigate", "Switch", "Open", "Export", "Today", "Tomorrow", "Yesterday",
-            "Weekdays", "Weekends", "Calendar", "Grid", "Table", "January", "February", "March",
-            "April", "May", "June", "July", "August", "September", "October", "November", "December"
+            "Vision", "Hey Vision", "Hi Vision", "Vijay", "Hey Vijay", "Hi Vijay",
+            "Nik", "Timesheet", "Copy", "Select", "Remove", "Deselect", "Unselect",
+            "Delete", "Add", "Set", "Go to", "Show", "Navigate", "Switch", "Open", "Export",
+            "Today", "Tomorrow", "Yesterday", "Weekdays", "Weekends", "Calendar", "Grid", "Table",
+            "Clear all", "Remove all", "Deselect all",
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
         ]
-        self.recognitionRequest = newRequest
         
-        // 4. Initialize the speech task
+        let oldRequest = self.recognitionRequest
+        let oldTask = self.recognitionTask
+        self.recognitionRequest = newRequest
+        self.requestHolder.request = newRequest
+        
+        oldRequest?.endAudio()
+        oldTask?.cancel()
+        
         let task = speechRecognizer.recognitionTask(with: newRequest) { [weak self] result, error in
             guard let self = self else { return }
             
@@ -328,25 +349,20 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 if let error = error {
                     isFinal = true
                     let nsError = error as NSError
-                    // Code 301/203 are user/session cancellation codes, safe to ignore
-                    if nsError.code != 301 && nsError.code != 203 {
+                    if nsError.code != 301 && nsError.code != 203 && nsError.code != 1110 {
                         self.addLog("[ERR] Speech recognizer error: \(error.localizedDescription)")
-                        self.speakFallbackError()
                     }
                 }
                 
                 if isFinal {
-                    // Properly nullify and stop audio processing on this request
                     if self.recognitionRequest === newRequest {
-                        self.requestHolder.request = nil
-                        self.recognitionRequest?.endAudio()
                         self.recognitionRequest = nil
-                        self.recognitionTask?.cancel()
                         self.recognitionTask = nil
                         
-                        // Attempt to restart session if we're still supposed to be listening
                         if self.isListening && !self.isSynthesizerSpeaking {
                             self.startNewRecognitionSession()
+                        } else {
+                            self.requestHolder.request = nil
                         }
                     }
                     
@@ -357,9 +373,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
         }
         
-        // 5. Store task and enable the audio tap to write to the request
         self.recognitionTask = task
-        self.requestHolder.request = newRequest
     }
     
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -367,34 +381,29 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
     private func processTranscript(_ text: String) {
-        // Discard microphone captures while synthesized output is active
+        guard isListening else { return }
         guard !isSynthesizerSpeaking else { return }
         
         let lowerText = text.lowercased()
         
         if !isActiveSession {
-            // Passive Mode: Look for the wake word
-            if let wakeRange = findFuzzyWakeWord(in: lowerText) {
+            if let wakeRange = VoiceCommandParser.findFuzzyWakeWord(in: lowerText) {
                 isActiveSession = true
                 systemStatus = "ACTIVE"
                 triggerHapticFeedback(.medium)
                 
-                // Get transcript payload following wake word
                 let commandPart = String(lowerText.suffix(from: wakeRange.upperBound)).trimmingCharacters(in: .whitespacesAndNewlines)
                 
-                if !commandPart.isEmpty && containsCommandKeywords(commandPart.lowercased()) {
-                    // Direct command in the same breath
+                if !commandPart.isEmpty && VoiceCommandParser.containsCommandKeywords(commandPart) {
                     addLog("[SYS] Voice Engine: ACTIVE. Parsing command stream...")
                     liveTranscript = commandPart
                     resetTimers()
-                    startSilenceTimer(seconds: 1.5)
+                    startSilenceTimer(seconds: 2.0)
                 } else {
                     addLog("[SYS] Voice Engine: ACTIVE. Awaiting command...")
                     liveTranscript = ""
                     
-                    // Schedule greeting with a 600ms delay to see if more speech is appended
                     greetDelayTask?.cancel()
-                    greetDelayTask = nil
                     greetDelayTask = Task { @MainActor in
                         do {
                             try await Task.sleep(nanoseconds: 600_000_000)
@@ -408,13 +417,10 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 }
             }
         } else {
-            // Active Mode: Read command text, handle timeouts/silences
-            
-            // Cancel any pending greeting task if the user speaks
             greetDelayTask?.cancel()
             greetDelayTask = nil
             
-            if let wakeRange = findFuzzyWakeWord(in: lowerText) {
+            if let wakeRange = VoiceCommandParser.findFuzzyWakeWord(in: lowerText) {
                 let commandPart = String(lowerText.suffix(from: wakeRange.upperBound))
                 liveTranscript = commandPart.trimmingCharacters(in: .whitespacesAndNewlines)
             } else {
@@ -422,155 +428,8 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
             
             resetTimers()
-            startSilenceTimer(seconds: 1.2)
+            startSilenceTimer(seconds: 2.5)
         }
-    }
-    
-    private func findFuzzyWakeWord(in text: String) -> Range<String.Index>? {
-        let lowerText = text.lowercased()
-        
-        let candidates = [
-            "hey vision", "hi vision", "hey visual", "hi visual",
-            "hey reason", "hi reason", "high vixen", "hey switch", "hey system",
-            "hay vision", "he vision", "heavy vision", "hi-vision", "hey-vision",
-            "hey listen", "hi listen", "hey prison", "hi prison", "open eyes", "open your eyes",
-            "hi vijin", "hey vijin", "hi vigen", "hey vigen", "hi vidjin", "hey vidjin",
-            "hi virgin", "hey virgin", "hi beacon", "hey beacon",
-            "vision vision", "vixen vixen", "vijin vijin",
-            "hey", "hay", "hi"
-        ]
-        
-        let words = lowerText.split(separator: " ").map(String.init)
-        if words.isEmpty { return nil }
-        
-        let cleanedWords = words.map { $0.filter { !$0.isPunctuation } }
-        
-        // Slide a window of size 1 to 3 across the entire words array
-        for i in 0..<words.count {
-            for count in 1...3 {
-                guard i + count <= words.count else { continue }
-                
-                let phrase = cleanedWords[i..<(i + count)].joined(separator: " ")
-                let originalPhrase = words[i..<(i + count)].joined(separator: " ")
-                
-                for candidate in candidates {
-                    let cleanPhrase = phrase.filter { !$0.isWhitespace }
-                    let cleanCandidate = candidate.filter { !$0.isPunctuation && !$0.isWhitespace }
-                    
-                    let sim = normalizedSimilarity(a: cleanPhrase, b: cleanCandidate)
-                    
-                    // short candidates (like "hey", "hi", "hay") require high similarity to avoid false positives
-                    let threshold: Double = (candidate.count <= 3) ? 0.95 : 0.80
-                    
-                    if sim >= threshold {
-                        if let range = lowerText.range(of: originalPhrase) {
-                            return range
-                        }
-                    }
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    private func containsCommandKeywords(_ lower: String) -> Bool {
-        let keywords = [
-            "select", "choose", "pick", "highlight", "toggle", "mark", "tick",
-            "remove", "delete", "deselect", "clear", "add", "set", "go to", "show",
-            "navigate", "switch", "open", "copy", "export", "from", "to", "till", "through",
-            "today", "tomorrow", "yesterday", "jan", "feb", "mar", "apr", "may", "jun",
-            "jul", "aug", "sep", "oct", "nov", "dec", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"
-        ]
-        for kw in keywords {
-            if fuzzyContains(lower, target: kw) {
-                return true
-            }
-        }
-        return false
-    }
-    
-    // Levenshtein & Fuzzy helpers
-    private func levenshtein(a: String, b: String) -> Int {
-        let aArray = Array(a.lowercased())
-        let bArray = Array(b.lowercased())
-        
-        if aArray.isEmpty { return bArray.count }
-        if bArray.isEmpty { return aArray.count }
-        
-        var matrix = Array(repeating: Array(repeating: 0, count: bArray.count + 1), count: aArray.count + 1)
-        
-        for i in 0...aArray.count {
-            matrix[i][0] = i
-        }
-        for j in 0...bArray.count {
-            matrix[0][j] = j
-        }
-        
-        for i in 1...aArray.count {
-            for j in 1...bArray.count {
-                if aArray[i - 1] == bArray[j - 1] {
-                    matrix[i][j] = matrix[i - 1][j - 1]
-                } else {
-                    matrix[i][j] = min(
-                        matrix[i - 1][j] + 1,
-                        matrix[i][j - 1] + 1,
-                        matrix[i - 1][j - 1] + 1
-                    )
-                }
-            }
-        }
-        return matrix[aArray.count][bArray.count]
-    }
-    
-    private func normalizedSimilarity(a: String, b: String) -> Double {
-        let dist = levenshtein(a: a, b: b)
-        let maxLen = max(a.count, b.count)
-        if maxLen == 0 { return 1.0 }
-        return 1.0 - (Double(dist) / Double(maxLen))
-    }
-    
-    private func fuzzyContains(_ text: String, target: String, threshold: Double = 0.7) -> Bool {
-        let lowerText = text.lowercased()
-        let lowerTarget = target.lowercased()
-        
-        if lowerText.contains(lowerTarget) { return true }
-        
-        let targetWords = lowerTarget.split(separator: " ").map(String.init)
-        let textWords = lowerText.split(separator: " ").map(String.init)
-        
-        if targetWords.isEmpty { return false }
-        
-        let windowSize = targetWords.count
-        if textWords.count < windowSize {
-            let sim = normalizedSimilarity(a: lowerText, b: lowerTarget)
-            let customThreshold: Double
-            if lowerTarget.count <= 3 {
-                customThreshold = 0.9
-            } else if lowerTarget.count <= 5 {
-                customThreshold = 0.75
-            } else {
-                customThreshold = threshold
-            }
-            return sim >= customThreshold
-        }
-        
-        for i in 0...(textWords.count - windowSize) {
-            let windowPhrase = textWords[i..<(i + windowSize)].joined(separator: " ")
-            let sim = normalizedSimilarity(a: windowPhrase, b: lowerTarget)
-            let customThreshold: Double
-            if lowerTarget.count <= 3 {
-                customThreshold = 0.9
-            } else if lowerTarget.count <= 5 {
-                customThreshold = 0.75
-            } else {
-                customThreshold = threshold
-            }
-            if sim >= customThreshold {
-                return true
-            }
-        }
-        return false
     }
     
     private func resetTimers() {
@@ -587,7 +446,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
     }
     
-    private func startSilenceTimer(seconds: Double = 1.2) {
+    private func startSilenceTimer(seconds: Double = 2.5) {
         silenceTask?.cancel()
         silenceTask = Task {
             do {
@@ -613,7 +472,6 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
     
     private func executeCommand() {
-        // Guard against executing commands while the synthesiser is active speaking
         guard !isSynthesizerSpeaking else { return }
         
         let command = liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -637,12 +495,19 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
     
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // MARK: - NLP Command Parser & Executor
+    // MARK: - Parser Dispatch & Execution
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
     private func parseAndExecute(command: String) -> Bool {
         guard let vm = viewModel else { return false }
-        let intent = extractIntent(from: command)
+        
+        let intent = VoiceCommandParser.parse(
+            command: command,
+            currentMonth: vm.currentMonth,
+            hoveredDate: hoveredDate,
+            lastSelectedDates: lastSelectedDates,
+            sessions: vm.sessions
+        )
         
         switch intent {
         case .activateCamera:
@@ -711,6 +576,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                     addLog("[SYS] Ghost-click applied to day \(day).")
                 }
             }
+            if !dates.isEmpty {
+                lastSelectedDates = dates
+            }
             if dates.count == 1 {
                 speak(text: "I have selected \(formatDateNatural(dates[0])) for you.")
             } else {
@@ -765,6 +633,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                         vm.updateSessionTimes(for: date, startMinutes: start, endMinutes: end)
                     }
                 }
+                lastSelectedDates = dates
                 let dateStr = dates.map { formatDateShort($0) }.joined(separator: ", ")
                 addLog("[OK] Set \(dateStr) from \(startStr) to \(endStr).")
                 
@@ -830,538 +699,6 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
     
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // MARK: - NLP Parsing Helper Libraries
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    
-    private func extractIntent(from command: String) -> CommandIntent {
-        let lower = command.lowercased()
-        
-        // 0. Switch UI views
-        if fuzzyContains(lower, target: "timesheet") || fuzzyContains(lower, target: "time sheet") || fuzzyContains(lower, target: "table") {
-            if fuzzyContains(lower, target: "switch") || fuzzyContains(lower, target: "show") || fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "view") || fuzzyContains(lower, target: "display") || fuzzyContains(lower, target: "open") {
-                return .switchView(showTimesheet: true)
-            }
-        }
-        if fuzzyContains(lower, target: "calendar") || fuzzyContains(lower, target: "calander") || fuzzyContains(lower, target: "grid") {
-            if fuzzyContains(lower, target: "switch") || fuzzyContains(lower, target: "show") || fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "view") || fuzzyContains(lower, target: "display") || fuzzyContains(lower, target: "open") {
-                return .switchView(showTimesheet: false)
-            }
-        }
-        
-        // 1. Camera activation / deactivation
-        if fuzzyContains(lower, target: "open your eyes") || fuzzyContains(lower, target: "open eyes") || fuzzyContains(lower, target: "open your vision") || fuzzyContains(lower, target: "open vision") {
-            return .activateCamera
-        }
-        if fuzzyContains(lower, target: "close your eyes") || fuzzyContains(lower, target: "close eyes") || fuzzyContains(lower, target: "close your vision") || fuzzyContains(lower, target: "close vision") {
-            return .deactivateCamera
-        }
-        
-        // 2. Clipboard copy
-        if fuzzyContains(lower, target: "copy") || fuzzyContains(lower, target: "export") {
-            return .copyReport
-        }
-        
-        // 3. Navigate month
-        let months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
-                      "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-        if fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "show") || fuzzyContains(lower, target: "navigate") || fuzzyContains(lower, target: "switch to") {
-            for monthName in months {
-                if fuzzyContains(lower, target: monthName), let monthInt = monthIndex(for: monthName) {
-                    let currentYear = Calendar.current.component(.year, from: Date())
-                    var comps = DateComponents()
-                    comps.year = currentYear
-                    comps.month = monthInt
-                    comps.day = 1
-                    if let targetMonth = Calendar.current.date(from: comps) {
-                        return .navigateMonth(targetMonth: targetMonth)
-                    }
-                }
-            }
-        }
-        
-        // 4. Resolve dates
-        var dates: [Date] = []
-        
-        if let relative = parseRelativeDate(from: command) {
-            dates.append(relative)
-        }
-        
-        let parsedDates = parseDates(from: command)
-        dates.append(contentsOf: parsedDates)
-        
-        let patternDates = parseWeekdayPatterns(from: command)
-        dates.append(contentsOf: patternDates)
-        
-        if dates.isEmpty {
-            let baseDate = viewModel?.currentMonth ?? Date()
-            let currentYear = Calendar.current.component(.year, from: baseDate)
-            let currentMonthInt = Calendar.current.component(.month, from: baseDate)
-            
-            let implicitDays = parseImplicitDays(from: command)
-            for day in implicitDays {
-                var comps = DateComponents()
-                comps.year = currentYear
-                comps.month = currentMonthInt
-                comps.day = day
-                if let date = Calendar.current.date(from: comps) {
-                    dates.append(Calendar.current.startOfDay(for: date))
-                }
-            }
-        }
-        
-        // Resolve pronouns ("it", "that", "them", "those", "these", "other", "others") to the last active sessions
-        let words = lower.split(separator: " ").map(String.init)
-        let hasPronoun = words.contains("it") || words.contains("that") || words.contains("them") || words.contains("those") || words.contains("these") || words.contains("this") || words.contains("other") || words.contains("others")
-        if dates.isEmpty && hasPronoun {
-            dates = lastSelectedDates
-            if !dates.isEmpty {
-                addLog("[NLP] Pronoun resolved to: \(dates.map { formatDateShort($0) }.joined(separator: ", "))")
-            }
-        }
-        
-        var uniqueDates: [Date] = []
-        for d in dates {
-            let start = Calendar.current.startOfDay(for: d)
-            if !uniqueDates.contains(start) {
-                uniqueDates.append(start)
-            }
-        }
-        
-        // Save to conversational memory or predict missing target contexts
-        if !uniqueDates.isEmpty {
-            lastSelectedDates = uniqueDates
-        } else if uniqueDates.isEmpty {
-            if fuzzyContains(lower, target: "remove") || fuzzyContains(lower, target: "delete") || fuzzyContains(lower, target: "deselect") || fuzzyContains(lower, target: "clear") {
-                uniqueDates = lastSelectedDates
-            } else if parseTimeRange(from: command) != nil {
-                if !lastSelectedDates.isEmpty {
-                    uniqueDates = lastSelectedDates
-                } else if let hovered = hoveredDate {
-                    uniqueDates = [Calendar.current.startOfDay(for: hovered)]
-                } else if let vm = viewModel, !vm.sessions.isEmpty {
-                    uniqueDates = vm.sessions.map { Calendar.current.startOfDay(for: $0.date) }
-                } else {
-                    uniqueDates = [Calendar.current.startOfDay(for: Date())]
-                }
-            } else if fuzzyContains(lower, target: "select") || fuzzyContains(lower, target: "add") || fuzzyContains(lower, target: "mark") || fuzzyContains(lower, target: "toggle") || fuzzyContains(lower, target: "choose") || fuzzyContains(lower, target: "pick") || fuzzyContains(lower, target: "highlight") || fuzzyContains(lower, target: "tick") {
-                if let hovered = hoveredDate {
-                    uniqueDates = [Calendar.current.startOfDay(for: hovered)]
-                } else {
-                    uniqueDates = [Calendar.current.startOfDay(for: Date())]
-                }
-            }
-            
-            if !uniqueDates.isEmpty {
-                lastSelectedDates = uniqueDates
-                addLog("[NLP] Predicted target: \(uniqueDates.map { formatDateShort($0) }.joined(separator: ", "))")
-            }
-        }
-        
-        if !uniqueDates.isEmpty {
-            if fuzzyContains(lower, target: "remove") || fuzzyContains(lower, target: "delete") || fuzzyContains(lower, target: "deselect") || fuzzyContains(lower, target: "clear") {
-                return .removeDate(dates: uniqueDates)
-            }
-            
-            let timeRange = parseTimeRange(from: command)
-            if let times = timeRange {
-                return .timeMutation(dates: uniqueDates, startMinutes: times.start, endMinutes: times.end)
-            }
-            
-            return .selectDate(dates: uniqueDates)
-        }
-        
-        let timeRange = parseTimeRange(from: command)
-        if let times = timeRange {
-            return .timeMutation(dates: [], startMinutes: times.start, endMinutes: times.end)
-        }
-        
-        return .unknown(command: command)
-    }
-    
-    private func parseDates(from text: String) -> [Date] {
-        var parsedDates: [Date] = []
-        let calendar = Calendar.current
-        let currentYear = calendar.component(.year, from: viewModel?.currentMonth ?? Date())
-        
-        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) {
-            let matches = detector.matches(in: text, options: [], range: NSRange(text.startIndex..., in: text))
-            for match in matches {
-                if let date = match.date {
-                    parsedDates.append(calendar.startOfDay(for: date))
-                }
-            }
-        }
-        
-        let monthNamePattern = "(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
-        let dayOfPattern = "(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+of\\s+\\b\(monthNamePattern)\\b"
-        if let regex = try? NSRegularExpression(pattern: dayOfPattern, options: [.caseInsensitive]) {
-            let nsString = text as NSString
-            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-            for match in matches {
-                if match.numberOfRanges > 2 {
-                    let dayStr = nsString.substring(with: match.range(at: 1))
-                    let monthStr = nsString.substring(with: match.range(at: 2)).lowercased()
-                    if let day = Int(dayStr), let monthInt = monthIndex(for: monthStr) {
-                        var comps = DateComponents()
-                        comps.year = currentYear
-                        comps.month = monthInt
-                        comps.day = day
-                        if let date = calendar.date(from: comps) {
-                            parsedDates.append(calendar.startOfDay(for: date))
-                        }
-                    }
-                }
-            }
-        }
-        
-        let dayListPattern = "\(monthNamePattern)\\s+(\\d{1,2})(?:\\s*(?:and|to|till|through|,)\\s*(\\d{1,2}))?(?:\\s*(?:and|to|till|through|,)\\s*(\\d{1,2}))?"
-        if let regex = try? NSRegularExpression(pattern: dayListPattern, options: [.caseInsensitive]) {
-            let nsString = text as NSString
-            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-            for match in matches {
-                if match.numberOfRanges > 1 {
-                    let monthStr = nsString.substring(with: match.range(at: 1)).lowercased()
-                    guard let monthInt = monthIndex(for: monthStr) else { continue }
-                    
-                    var days: [Int] = []
-                    for i in 2..<match.numberOfRanges {
-                        let r = match.range(at: i)
-                        if r.location != NSNotFound {
-                            if let day = Int(nsString.substring(with: r)) {
-                                days.append(day)
-                            }
-                        }
-                    }
-                    
-                    let matchedSubstr = nsString.substring(with: match.range).lowercased()
-                    if matchedSubstr.contains(" to ") || matchedSubstr.contains(" till ") || matchedSubstr.contains(" through ") {
-                        if days.count >= 2 {
-                            let start = days[0]
-                            let end = days[1]
-                            if start < end {
-                                days = Array(start...end)
-                            }
-                        }
-                    }
-                    
-                    for day in days {
-                        var comps = DateComponents()
-                        comps.year = currentYear
-                        comps.month = monthInt
-                        comps.day = day
-                        if let date = calendar.date(from: comps) {
-                            parsedDates.append(calendar.startOfDay(for: date))
-                        }
-                    }
-                }
-            }
-        }
-        
-        if parsedDates.count == 2 && (text.contains(" to ") || text.contains(" till ") || text.contains(" through ")) {
-            let start = parsedDates[0]
-            let end = parsedDates[1]
-            if start < end {
-                var current = start
-                var rangeDates: [Date] = []
-                while current <= end {
-                    rangeDates.append(current)
-                    if let next = calendar.date(byAdding: .day, value: 1, to: current) {
-                        current = next
-                    } else {
-                        break
-                    }
-                }
-                parsedDates = rangeDates
-            }
-        }
-        
-        // Force the year of all parsed dates to be the displayed calendar year
-        let targetYear = calendar.component(.year, from: viewModel?.currentMonth ?? Date())
-        var normalizedDates: [Date] = []
-        for date in parsedDates {
-            var comps = calendar.dateComponents([.month, .day], from: date)
-            comps.year = targetYear
-            if let normalized = calendar.date(from: comps) {
-                normalizedDates.append(calendar.startOfDay(for: normalized))
-            } else {
-                normalizedDates.append(calendar.startOfDay(for: date))
-            }
-        }
-        
-        var unique: [Date] = []
-        for d in normalizedDates {
-            if !unique.contains(d) {
-                unique.append(d)
-            }
-        }
-        return unique.sorted()
-    }
-    
-    private func parseRelativeDate(from text: String) -> Date? {
-        let lower = text.lowercased()
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        
-        if lower.contains("tomorrow") {
-            return calendar.date(byAdding: .day, value: 1, to: today)
-        }
-        if lower.contains("today") {
-            return today
-        }
-        if lower.contains("yesterday") {
-            return calendar.date(byAdding: .day, value: -1, to: today)
-        }
-        
-        let weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
-        for (index, dayName) in weekdays.enumerated() {
-            if lower.contains("next \(dayName)") {
-                let targetWeekday = index + 1
-                var comps = DateComponents()
-                comps.weekday = targetWeekday
-                if let nextDate = calendar.nextDate(after: Date(), matching: comps, matchingPolicy: .nextTime) {
-                    return calendar.startOfDay(for: nextDate)
-                }
-            }
-        }
-        return nil
-    }
-    
-    private func parseImplicitDays(from text: String) -> [Int] {
-        let implicitPattern = "\\b(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\b"
-        guard let regex = try? NSRegularExpression(pattern: implicitPattern, options: [.caseInsensitive]) else { return [] }
-        let nsString = text as NSString
-        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-        
-        var implicitDays: [Int] = []
-        for match in matches {
-            let dayStr = nsString.substring(with: match.range(at: 1))
-            guard let day = Int(dayStr), day >= 1 && day <= 31 else { continue }
-            
-            let range = match.range
-            let startIdx = max(0, range.location - 5)
-            let endIdx = min(nsString.length, range.location + range.length + 5)
-            let context = nsString.substring(with: NSRange(location: startIdx, length: endIdx - startIdx)).lowercased()
-            
-            if context.contains("am") || context.contains("pm") || context.contains(":") || context.contains("2026") {
-                continue
-            }
-            implicitDays.append(day)
-        }
-        return implicitDays
-    }
-    
-    private func parseTimeRange(from text: String) -> (start: Int, end: Int)? {
-        let preprocessed = preprocessTimeWords(text)
-        let nsString = preprocessed as NSString
-        
-        // 1. Duration range pattern: e.g. "log 8 hours starting at 9 AM" or "for 6.5 hours starting at 10:30"
-        let durationPattern = "\\b(?:for|log|track)?\\s*(\\d+(?:\\.\\d+)?)\\s*hours?\\s*(?:starting|beginning|at)?\\s*(?:at)?\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\b"
-        if let durRegex = try? NSRegularExpression(pattern: durationPattern, options: [.caseInsensitive]) {
-            if let match = durRegex.firstMatch(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length)) {
-                let durationStr = nsString.substring(with: match.range(at: 1))
-                let startHourStr = nsString.substring(with: match.range(at: 2))
-                let startMinStr = match.range(at: 3).location != NSNotFound ? nsString.substring(with: match.range(at: 3)) : nil
-                let startAMPM = match.range(at: 4).location != NSNotFound ? nsString.substring(with: match.range(at: 4)) : nil
-                
-                if let duration = Double(durationStr), var startHour = Int(startHourStr) {
-                    let startMin = Int(startMinStr ?? "") ?? 0
-                    
-                    if let ampm = startAMPM?.lowercased() {
-                        if ampm == "pm" && startHour < 12 { startHour += 12 }
-                        if ampm == "am" && startHour == 12 { startHour = 0 }
-                    } else {
-                        if startHour < 7 { startHour += 12 }
-                    }
-                    
-                    let startMinutes = startHour * 60 + startMin
-                    let endMinutes = startMinutes + Int(duration * 60)
-                    return (startMinutes, min(endMinutes, 1440))
-                }
-            }
-        }
-        
-        // 2. Standard shift keyword match
-        if preprocessed.contains("standard shift") || preprocessed.contains("standard day") || preprocessed.contains("full day") {
-            return (9 * 60, 17 * 60) // 9:00 AM to 5:00 PM (8 hours)
-        }
-        
-        // 3. Range pattern: e.g. "9 to 5", "9:30 - 17:00", "9am to 6pm"
-        let pattern = "\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s*(?:to|till|until|-)\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\b"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
-        
-        if let match = regex.firstMatch(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length)) {
-            let startHourStr = nsString.substring(with: match.range(at: 1))
-            let startMinStr = match.range(at: 2).location != NSNotFound ? nsString.substring(with: match.range(at: 2)) : nil
-            let startAMPM = match.range(at: 3).location != NSNotFound ? nsString.substring(with: match.range(at: 3)) : nil
-            
-            let endHourStr = nsString.substring(with: match.range(at: 4))
-            let endMinStr = match.range(at: 5).location != NSNotFound ? nsString.substring(with: match.range(at: 5)) : nil
-            let endAMPM = match.range(at: 6).location != NSNotFound ? nsString.substring(with: match.range(at: 6)) : nil
-            
-            var startHour = Int(startHourStr) ?? 7
-            let startMin = Int(startMinStr ?? "") ?? 0
-            var endHour = Int(endHourStr) ?? 16
-            let endMin = Int(endMinStr ?? "") ?? 0
-            
-            if let ampm = startAMPM?.lowercased() {
-                if ampm == "pm" && startHour < 12 { startHour += 12 }
-                if ampm == "am" && startHour == 12 { startHour = 0 }
-            } else {
-                if startHour < 7 { startHour += 12 }
-            }
-            
-            if let ampm = endAMPM?.lowercased() {
-                if ampm == "pm" && endHour < 12 { endHour += 12 }
-                if ampm == "am" && endHour == 12 { endHour = 0 }
-            } else {
-                if endHour < startHour && endHour < 12 {
-                    endHour += 12
-                } else if endHour < 7 {
-                    endHour += 12
-                }
-            }
-            
-            return (startHour * 60 + startMin, endHour * 60 + endMin)
-        }
-        
-        // 4. Single time fallback: e.g. "9:30" (defaults to a standard 9-hour offset)
-        let singleTimePattern = "\\b(\\d{1,2}):(\\d{2})\\b"
-        if let singleRegex = try? NSRegularExpression(pattern: singleTimePattern, options: []) {
-            let matches = singleRegex.matches(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length))
-            if matches.count == 1 {
-                let m = matches[0]
-                if let hour = Int(nsString.substring(with: m.range(at: 1))),
-                   let min = Int(nsString.substring(with: m.range(at: 2))) {
-                    if preprocessed.contains("till") || preprocessed.contains("to") {
-                        return (7 * 60, hour * 60 + min)
-                    } else {
-                        return (hour * 60 + min, (hour + 9) * 60 + min)
-                    }
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    private func monthIndex(for monthStr: String) -> Int? {
-        let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-        let longMonths = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
-        if let idx = longMonths.firstIndex(of: monthStr) { return idx + 1 }
-        if let idx = months.firstIndex(of: monthStr) { return idx + 1 }
-        return nil
-    }
-    
-    private func parseWeekdayPatterns(from text: String) -> [Date] {
-        let lower = text.lowercased()
-        let calendar = Calendar.current
-        let baseDate = viewModel?.currentMonth ?? Date()
-        
-        // Find all days in the currently displayed month
-        guard let monthRange = calendar.range(of: .day, in: .month, for: baseDate),
-              let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: baseDate)) else {
-            return []
-        }
-        
-        var datesInMonth: [Date] = []
-        for day in 1...monthRange.count {
-            if let date = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth) {
-                datesInMonth.append(calendar.startOfDay(for: date))
-            }
-        }
-        
-        // 1. "weekdays" (Mondays through Fridays)
-        if lower.contains("weekday") {
-            return datesInMonth.filter { date in
-                let wd = calendar.component(.weekday, from: date)
-                return wd >= 2 && wd <= 6
-            }
-        }
-        
-        // 2. "weekends" (Saturdays and Sundays)
-        if lower.contains("weekend") {
-            return datesInMonth.filter { date in
-                let wd = calendar.component(.weekday, from: date)
-                return wd == 1 || wd == 7
-            }
-        }
-        
-        // 3. "all days" or "entire month" or "every day"
-        if lower.contains("all days") || lower.contains("entire month") || lower.contains("every day") || lower.contains("all of") {
-            return datesInMonth
-        }
-        
-        // 4. Match specific weekdays (e.g. "Mondays", "Mondays and Wednesdays", "Tuesdays")
-        let weekdayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
-        var selectedWeekdays: [Int] = []
-        
-        for (index, name) in weekdayNames.enumerated() {
-            if lower.contains(name) || lower.contains("\(name)s") {
-                selectedWeekdays.append(index + 1)
-            }
-            
-            let short = String(name.prefix(3))
-            if short != "thu" && short != "sat" {
-                let pattern = "\\b\(short)s?\\b"
-                if let regex = try? NSRegularExpression(pattern: pattern),
-                   regex.firstMatch(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower)) != nil {
-                    selectedWeekdays.append(index + 1)
-                }
-            } else {
-                let pattern = "\\b\(short)s?\\b|\\bthurs?\\b"
-                if let regex = try? NSRegularExpression(pattern: pattern),
-                   regex.firstMatch(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower)) != nil {
-                    selectedWeekdays.append(index + 1)
-                }
-            }
-        }
-        
-        if !selectedWeekdays.isEmpty {
-            return datesInMonth.filter { date in
-                let wd = calendar.component(.weekday, from: date)
-                return selectedWeekdays.contains(wd)
-            }
-        }
-        
-        return []
-    }
-    
-    private func preprocessTimeWords(_ text: String) -> String {
-        var lower = text.lowercased()
-        
-        // Common phrases
-        lower = lower.replacingOccurrences(of: "nine thirty", with: "9:30")
-        lower = lower.replacingOccurrences(of: "eight thirty", with: "8:30")
-        lower = lower.replacingOccurrences(of: "seven thirty", with: "7:30")
-        lower = lower.replacingOccurrences(of: "half past nine", with: "9:30")
-        lower = lower.replacingOccurrences(of: "half past eight", with: "8:30")
-        lower = lower.replacingOccurrences(of: "half past seven", with: "7:30")
-        lower = lower.replacingOccurrences(of: "noon", with: "12")
-        
-        // Single digits
-        let wordNumbers = [
-            ("one", "1"), ("two", "2"), ("three", "3"), ("four", "4"),
-            ("five", "5"), ("six", "6"), ("seven", "7"), ("eight", "8"),
-            ("nine", "9"), ("ten", "10"), ("eleven", "11"), ("twelve", "12")
-        ]
-        
-        for (word, num) in wordNumbers {
-            let pattern = "\\b\(word)\\b"
-            if let regex = try? NSRegularExpression(pattern: pattern) {
-                lower = regex.stringByReplacingMatches(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower), withTemplate: num)
-            }
-        }
-        
-        // Convert dot time separator (e.g. 9.30) to colon (9:30)
-        let dotPattern = "\\b(\\d{1,2})\\.(\\d{2})\\b"
-        if let regex = try? NSRegularExpression(pattern: dotPattern) {
-            lower = regex.stringByReplacingMatches(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower), withTemplate: "$1:$2")
-        }
-        
-        return lower
-    }
-    
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // MARK: - Logging & Feedback Utilities
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
@@ -1423,44 +760,10 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // Cleanly cancel the active recognition session to release resources
-            // and avoid echo transcribing during speech synthesis.
             self.cancelCurrentRecognitionSession()
             
             let utterance = AVSpeechUtterance(string: text)
-            
-            let voices = AVSpeechSynthesisVoice.speechVoices()
-            
-            // Priority 1: Premium Male voice in US/GB English
-            var selectedVoice = voices.first(where: {
-                $0.gender == .male &&
-                ($0.language == "en-US" || $0.language == "en-GB") &&
-                $0.quality == .premium
-            })
-            
-            // Priority 2: Enhanced Male voice in US/GB English
-            if selectedVoice == nil {
-                selectedVoice = voices.first(where: {
-                    $0.gender == .male &&
-                    ($0.language == "en-US" || $0.language == "en-GB") &&
-                    $0.quality == .enhanced
-                })
-            }
-            
-            // Priority 3: Any Male English voice
-            if selectedVoice == nil {
-                selectedVoice = voices.first(where: {
-                    $0.gender == .male &&
-                    $0.language.hasPrefix("en")
-                })
-            }
-            
-            // Fallback: Default US English voice
-            if selectedVoice == nil {
-                selectedVoice = AVSpeechSynthesisVoice(language: "en-US")
-            }
-            
-            utterance.voice = selectedVoice
+            utterance.voice = self.cachedVoice
             utterance.rate = 0.52
             utterance.pitchMultiplier = 1.0
             
@@ -1476,8 +779,6 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
     
     private func speakFallbackError() {
-        // STRICT GUARD: only speak fallbacks if there's an active vocal session (user has woken up the app).
-        // Prevents ambient background noise or background engine restarts from talking out loud in standby mode.
         guard isActiveSession else { return }
         
         let now = Date()
@@ -1507,9 +808,11 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             guard let active = self.activeUtterance, ObjectIdentifier(active) == utteranceID else { return }
             self.isSynthesizerSpeaking = false
             self.activeUtterance = nil
-            self.startNewRecognitionSession()
-            self.resetTimers()
-            self.startSilenceTimer(seconds: 4.0)
+            if self.isListening {
+                self.startNewRecognitionSession()
+                self.resetTimers()
+                self.startSilenceTimer(seconds: 4.0)
+            }
         }
     }
     
@@ -1519,9 +822,11 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             guard let active = self.activeUtterance, ObjectIdentifier(active) == utteranceID else { return }
             self.isSynthesizerSpeaking = false
             self.activeUtterance = nil
-            self.startNewRecognitionSession()
-            self.resetTimers()
-            self.startSilenceTimer(seconds: 4.0)
+            if self.isListening {
+                self.startNewRecognitionSession()
+                self.resetTimers()
+                self.startSilenceTimer(seconds: 4.0)
+            }
         }
     }
     
@@ -1573,6 +878,834 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         let endStr = endMin == 0 ? "\(endHourNormalized) \(endPeriod)" : "\(endHourNormalized) \(endMin) \(endPeriod)"
         
         return "\(startStr) to \(endStr)"
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MARK: - Voice Command Parser (Local NLP Pipeline)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+struct VoiceCommandParser {
+    
+    struct ParsedTimeRange {
+        let startMinutes: Int
+        let endMinutes: Int
+    }
+    
+    static func parse(
+        command: String,
+        currentMonth: Date,
+        hoveredDate: Date?,
+        lastSelectedDates: [Date],
+        sessions: [WorkSession]
+    ) -> CommandIntent {
+        let lower = command.lowercased()
+        
+        // 1. Camera Toggle
+        if fuzzyContains(lower, target: "open your eyes") || fuzzyContains(lower, target: "open eyes") ||
+           fuzzyContains(lower, target: "open your vision") || fuzzyContains(lower, target: "open vision") ||
+           fuzzyContains(lower, target: "activate camera") || fuzzyContains(lower, target: "start camera") ||
+           fuzzyContains(lower, target: "camera on") {
+            return .activateCamera
+        }
+        if fuzzyContains(lower, target: "close your eyes") || fuzzyContains(lower, target: "close eyes") ||
+           fuzzyContains(lower, target: "close your vision") || fuzzyContains(lower, target: "close vision") ||
+           fuzzyContains(lower, target: "deactivate camera") || fuzzyContains(lower, target: "stop camera") ||
+           fuzzyContains(lower, target: "camera off") {
+            return .deactivateCamera
+        }
+        
+        // 2. Clipboard copy
+        if fuzzyContains(lower, target: "copy") || fuzzyContains(lower, target: "export") || fuzzyContains(lower, target: "generate report") {
+            return .copyReport
+        }
+        
+        // 3. Switch view
+        if fuzzyContains(lower, target: "timesheet") || fuzzyContains(lower, target: "time sheet") || fuzzyContains(lower, target: "table") || fuzzyContains(lower, target: "list") {
+            if fuzzyContains(lower, target: "switch") || fuzzyContains(lower, target: "show") ||
+               fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "view") ||
+               fuzzyContains(lower, target: "display") || fuzzyContains(lower, target: "open") {
+                return .switchView(showTimesheet: true)
+            }
+        }
+        if fuzzyContains(lower, target: "calendar") || fuzzyContains(lower, target: "calander") || fuzzyContains(lower, target: "grid") {
+            if fuzzyContains(lower, target: "switch") || fuzzyContains(lower, target: "show") ||
+               fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "view") ||
+               fuzzyContains(lower, target: "display") || fuzzyContains(lower, target: "open") {
+                return .switchView(showTimesheet: false)
+            }
+        }
+        
+        // 4. Navigate month
+        let months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+                      "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        if fuzzyContains(lower, target: "go to") || fuzzyContains(lower, target: "show") ||
+           fuzzyContains(lower, target: "navigate") || fuzzyContains(lower, target: "switch to") {
+            for monthName in months {
+                if fuzzyContains(lower, target: monthName), let monthInt = monthIndex(for: monthName) {
+                    let currentYear = Calendar.current.component(.year, from: Date())
+                    var comps = DateComponents()
+                    comps.year = currentYear
+                    comps.month = monthInt
+                    comps.day = 1
+                    if let targetMonth = Calendar.current.date(from: comps) {
+                        return .navigateMonth(targetMonth: targetMonth)
+                    }
+                }
+            }
+        }
+        
+        // 5. Bulk remove / clear
+        if lower.contains("remove all") || lower.contains("deselect all") ||
+           lower.contains("unselect all") || lower.contains("clear all") ||
+           lower.contains("delete all") {
+            let allDates = sessions.map { Calendar.current.startOfDay(for: $0.date) }
+            return .removeDate(dates: allDates)
+        }
+        
+        // --- Date & Time parsing pipeline ---
+        let preprocessedTime = preprocessTimeWords(lower)
+        let preprocessedForDates = preprocessNumbers(preprocessedTime)
+        
+        var mutableTextForDates = preprocessedForDates
+        
+        // 5b. Extract day ranges first and remove them from the parsing stream
+        var dates = extractAndRemoveDayRanges(from: &mutableTextForDates, currentMonth: currentMonth)
+        
+        // 6. Extract time range or standard shift
+        let timeRange = parseTimeRange(from: mutableTextForDates)
+        
+        // Strip time range substrings from preprocessedForDates to avoid number collision
+        let cleanedForDates = stripTimeRangePatterns(from: mutableTextForDates)
+        
+        // 7. Resolve dates
+        let calendar = Calendar.current
+        
+        // Relative Dates
+        if let relative = parseRelativeDate(from: cleanedForDates) {
+            dates.append(relative)
+        }
+        
+        // NSDataDetector dates
+        let parsedDates = parseDates(from: cleanedForDates, currentMonth: currentMonth)
+        dates.append(contentsOf: parsedDates)
+        
+        // Weekday patterns
+        let patternDates = parseWeekdayPatterns(from: cleanedForDates, currentMonth: currentMonth)
+        dates.append(contentsOf: patternDates)
+        
+        // Implicit day numbers & Day ranges (if no dates resolved yet)
+        if dates.isEmpty {
+            let baseDate = currentMonth
+            let currentYear = calendar.component(.year, from: baseDate)
+            let currentMonthInt = calendar.component(.month, from: baseDate)
+            
+            let implicitDays = parseImplicitDaysAndRanges(from: cleanedForDates)
+            for day in implicitDays {
+                var comps = DateComponents()
+                comps.year = currentYear
+                comps.month = currentMonthInt
+                comps.day = day
+                if let date = calendar.date(from: comps) {
+                    dates.append(calendar.startOfDay(for: date))
+                }
+            }
+        }
+        
+        // Pronoun resolution
+        let words = cleanedForDates.split(separator: " ").map(String.init)
+        let hasPronoun = words.contains("it") || words.contains("that") || words.contains("them") ||
+                         words.contains("those") || words.contains("these") || words.contains("this") ||
+                         words.contains("other") || words.contains("others")
+        
+        if dates.isEmpty && hasPronoun {
+            dates = lastSelectedDates
+        }
+        
+        // Remove duplicates and sort
+        var uniqueDates: [Date] = []
+        for d in dates {
+            let start = calendar.startOfDay(for: d)
+            if !uniqueDates.contains(start) {
+                uniqueDates.append(start)
+            }
+        }
+        uniqueDates.sort()
+        
+        // If we still have no dates, predict/fallback to contexts
+        if uniqueDates.isEmpty {
+            if lower.contains("remove") || lower.contains("delete") || lower.contains("deselect") ||
+               lower.contains("unselect") || lower.contains("clear") {
+                uniqueDates = lastSelectedDates
+            } else if timeRange != nil {
+                if !lastSelectedDates.isEmpty {
+                    uniqueDates = lastSelectedDates
+                } else if let hovered = hoveredDate {
+                    uniqueDates = [calendar.startOfDay(for: hovered)]
+                } else if !sessions.isEmpty {
+                    uniqueDates = sessions.map { calendar.startOfDay(for: $0.date) }
+                } else {
+                    uniqueDates = [calendar.startOfDay(for: Date())]
+                }
+            } else if lower.contains("select") || lower.contains("add") || lower.contains("mark") ||
+                      lower.contains("toggle") || lower.contains("choose") || lower.contains("pick") ||
+                      lower.contains("highlight") || lower.contains("tick") || lower.contains("check") {
+                if let hovered = hoveredDate {
+                    uniqueDates = [calendar.startOfDay(for: hovered)]
+                } else {
+                    uniqueDates = [calendar.startOfDay(for: Date())]
+                }
+            }
+        }
+        
+        // Dispatch Intent
+        if !uniqueDates.isEmpty {
+            if lower.contains("remove") || lower.contains("delete") || lower.contains("deselect") ||
+               lower.contains("unselect") || lower.contains("clear") {
+                return .removeDate(dates: uniqueDates)
+            }
+            
+            if let times = timeRange {
+                return .timeMutation(dates: uniqueDates, startMinutes: times.startMinutes, endMinutes: times.endMinutes)
+            }
+            
+            return .selectDate(dates: uniqueDates)
+        }
+        
+        if let times = timeRange {
+            return .timeMutation(dates: [], startMinutes: times.startMinutes, endMinutes: times.endMinutes)
+        }
+        
+        return .unknown(command: command)
+    }
+    
+    // ── Wake Word & Keywords Helpers ──
+    
+    static func findFuzzyWakeWord(in text: String) -> Range<String.Index>? {
+        let lowerText = text.lowercased()
+        
+        let candidates = [
+            "hey vision", "hi vision", "hey visual", "hi visual",
+            "hey reason", "hi reason", "high vision", "hay vision",
+            "he vision", "heavy vision", "hi-vision", "hey-vision",
+            "hey vixen", "hi vixen", "hey vijin", "hi vijin",
+            "hey vigen", "hi vigen", "hey vidjin", "hi vidjin",
+            "hey virgin", "hi virgin", "hey beacon", "hi beacon",
+            "hey vijay", "hi vijay", "high vijay", "hay vijay",
+            "hey vjay", "hi vjay", "hey vejay", "hi vejay",
+            "hey fidjay", "hi fidjay", "hey widget", "hi widget",
+            "hey region", "hi region", "hey pigeon", "hi pigeon"
+        ]
+        
+        let words = lowerText.split(separator: " ").map(String.init)
+        if words.isEmpty { return nil }
+        
+        let cleanedWords = words.map { $0.filter { !$0.isPunctuation } }
+        
+        for i in 0..<words.count {
+            for count in 1...3 {
+                guard i + count <= words.count else { continue }
+                
+                let phrase = cleanedWords[i..<(i + count)].joined(separator: " ")
+                let originalPhrase = words[i..<(i + count)].joined(separator: " ")
+                
+                for candidate in candidates {
+                    let cleanPhrase = phrase.filter { !$0.isWhitespace }
+                    let cleanCandidate = candidate.filter { !$0.isPunctuation && !$0.isWhitespace }
+                    
+                    let sim = normalizedSimilarity(a: cleanPhrase, b: cleanCandidate)
+                    let threshold: Double = 0.85
+                    
+                    if sim >= threshold {
+                        if let range = lowerText.range(of: originalPhrase) {
+                            return range
+                        }
+                    }
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    static func containsCommandKeywords(_ lower: String) -> Bool {
+        let exactKeywords = [
+            "select", "choose", "pick", "highlight", "toggle", "mark", "tick", "check",
+            "remove", "delete", "deselect", "unselect", "clear", "add", "set", "go to", "show", "log", "track",
+            "navigate", "switch", "open", "copy", "export", "change", "update",
+            "today", "tomorrow", "yesterday", "calendar", "timesheet", "table", "grid",
+            "weekday", "weekend", "standard shift", "full day",
+            "january", "february", "march", "april", "june",
+            "july", "august", "september", "october", "november", "december"
+        ]
+        let words = Set(lower.split(separator: " ").map(String.init))
+        for kw in exactKeywords {
+            if kw.contains(" ") {
+                if lower.contains(kw) { return true }
+            } else {
+                if words.contains(kw) { return true }
+            }
+        }
+        return false
+    }
+    
+    // ── Levenshtein & Similarity Helpers ──
+    
+    private static func levenshtein(a: String, b: String) -> Int {
+        let aArray = Array(a.lowercased())
+        let bArray = Array(b.lowercased())
+        
+        if aArray.isEmpty { return bArray.count }
+        if bArray.isEmpty { return aArray.count }
+        
+        var matrix = Array(repeating: Array(repeating: 0, count: bArray.count + 1), count: aArray.count + 1)
+        
+        for i in 0...aArray.count {
+            matrix[i][0] = i
+        }
+        for j in 0...bArray.count {
+            matrix[0][j] = j
+        }
+        
+        for i in 1...aArray.count {
+            for j in 1...bArray.count {
+                if aArray[i - 1] == bArray[j - 1] {
+                    matrix[i][j] = matrix[i - 1][j - 1]
+                } else {
+                    matrix[i][j] = min(
+                        matrix[i - 1][j] + 1,
+                        matrix[i][j - 1] + 1,
+                        matrix[i - 1][j - 1] + 1
+                    )
+                }
+            }
+        }
+        return matrix[aArray.count][bArray.count]
+    }
+    
+    private static func normalizedSimilarity(a: String, b: String) -> Double {
+        let dist = levenshtein(a: a, b: b)
+        let maxLen = max(a.count, b.count)
+        if maxLen == 0 { return 1.0 }
+        return 1.0 - (Double(dist) / Double(maxLen))
+    }
+    
+    private static func fuzzyContains(_ text: String, target: String, threshold: Double = 0.80) -> Bool {
+        let lowerText = text.lowercased()
+        let lowerTarget = target.lowercased()
+        
+        if lowerText.contains(lowerTarget) { return true }
+        
+        if lowerTarget.count <= 5 { return false }
+        
+        let targetWords = lowerTarget.split(separator: " ").map(String.init)
+        let textWords = lowerText.split(separator: " ").map(String.init)
+        
+        if targetWords.isEmpty { return false }
+        
+        let windowSize = targetWords.count
+        if textWords.count < windowSize {
+            return normalizedSimilarity(a: lowerText, b: lowerTarget) >= threshold
+        }
+        
+        for i in 0...(textWords.count - windowSize) {
+            let windowPhrase = textWords[i..<(i + windowSize)].joined(separator: " ")
+            if normalizedSimilarity(a: windowPhrase, b: lowerTarget) >= threshold {
+                return true
+            }
+        }
+        return false
+    }
+    
+    // ── Preprocessing & Normalization ──
+    
+    private static func preprocessTimeWords(_ text: String) -> String {
+        var lower = text.lowercased()
+        
+        lower = lower.replacingOccurrences(of: "nine thirty", with: "9:30")
+        lower = lower.replacingOccurrences(of: "eight thirty", with: "8:30")
+        lower = lower.replacingOccurrences(of: "seven thirty", with: "7:30")
+        lower = lower.replacingOccurrences(of: "half past nine", with: "9:30")
+        lower = lower.replacingOccurrences(of: "half past eight", with: "8:30")
+        lower = lower.replacingOccurrences(of: "half past seven", with: "7:30")
+        lower = lower.replacingOccurrences(of: "noon", with: "12")
+        
+        let wordNumbers = [
+            ("one", "1"), ("two", "2"), ("three", "3"), ("four", "4"),
+            ("five", "5"), ("six", "6"), ("seven", "7"), ("eight", "8"),
+            ("nine", "9"), ("ten", "10"), ("eleven", "11"), ("twelve", "12")
+        ]
+        
+        for (word, num) in wordNumbers {
+            let pattern = "\\b\(word)\\b"
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                lower = regex.stringByReplacingMatches(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower), withTemplate: num)
+            }
+        }
+        
+        let dotPattern = "\\b(\\d{1,2})\\.(\\d{2})\\b"
+        if let regex = try? NSRegularExpression(pattern: dotPattern) {
+            lower = regex.stringByReplacingMatches(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower), withTemplate: "$1:$2")
+        }
+        
+        return lower
+    }
+    
+    private static func preprocessNumbers(_ text: String) -> String {
+        var lower = text.lowercased()
+        
+        let mappings = [
+            ("twenty-first", "21"), ("twenty first", "21"), ("twenty-one", "21"), ("twenty one", "21"),
+            ("twenty-second", "22"), ("twenty second", "22"), ("twenty-two", "22"), ("twenty two", "22"),
+            ("twenty-third", "23"), ("twenty third", "23"), ("twenty-three", "23"), ("twenty three", "23"),
+            ("twenty-fourth", "24"), ("twenty fourth", "24"), ("twenty-four", "24"), ("twenty four", "24"),
+            ("twenty-fifth", "25"), ("twenty fifth", "25"), ("twenty-five", "25"), ("twenty five", "25"),
+            ("twenty-sixth", "26"), ("twenty sixth", "26"), ("twenty-six", "26"), ("twenty six", "26"),
+            ("twenty-seventh", "27"), ("twenty seventh", "27"), ("twenty-seven", "27"), ("twenty seven", "27"),
+            ("twenty-eighth", "28"), ("twenty eighth", "28"), ("twenty-eight", "28"), ("twenty eight", "28"),
+            ("twenty-ninth", "29"), ("twenty ninth", "29"), ("twenty-nine", "29"), ("twenty nine", "29"),
+            ("thirty-first", "31"), ("thirty first", "31"), ("thirty-one", "31"), ("thirty one", "31"),
+            ("thirteenth", "13"), ("thirteen", "13"),
+            ("fourteenth", "14"), ("fourteen", "14"),
+            ("fifteenth", "15"), ("fifteen", "15"),
+            ("sixteenth", "16"), ("sixteen", "16"),
+            ("seventeenth", "17"), ("seventeen", "17"),
+            ("eighteenth", "18"), ("eighteen", "18"),
+            ("nineteenth", "19"), ("nineteen", "19"),
+            ("twentieth", "20"), ("twenty", "20"),
+            ("thirtieth", "30"), ("thirty", "30"),
+            ("eleventh", "11"), ("eleven", "11"),
+            ("twelfth", "12"), ("twelve", "12"),
+            ("fourth", "4"), ("four", "4"),
+            ("fifth", "5"), ("five", "5"),
+            ("sixth", "6"), ("six", "6"),
+            ("seventh", "7"), ("seven", "7"),
+            ("eighth", "8"), ("eight", "8"),
+            ("ninth", "9"), ("nine", "9"),
+            ("tenth", "10"), ("ten", "10"),
+            ("first", "1"), ("one", "1"),
+            ("second", "2"), ("two", "2"),
+            ("third", "3"), ("three", "3")
+        ]
+        
+        for (word, digit) in mappings {
+            let pattern = "\\b\(word)\\b"
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                lower = regex.stringByReplacingMatches(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower), withTemplate: digit)
+            }
+        }
+        
+        return lower
+    }
+    
+    private static func stripTimeRangePatterns(from text: String) -> String {
+        var result = text
+        
+        let durationPattern = "\\b(?:for|log|track)?\\s*\\d+(?:\\.\\d+)?\\s*hours?\\s*(?:starting|beginning|at)?\\s*(?:at)?\\s*\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?\\b"
+        if let regex = try? NSRegularExpression(pattern: durationPattern, options: [.caseInsensitive]) {
+            result = regex.stringByReplacingMatches(in: result, options: [], range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        
+        result = result.replacingOccurrences(of: "standard shift", with: "")
+        result = result.replacingOccurrences(of: "standard day", with: "")
+        result = result.replacingOccurrences(of: "full day", with: "")
+        
+        let rangePattern = "\\b\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?\\s*(?:to|till|until|-)\\s*\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?\\b"
+        if let regex = try? NSRegularExpression(pattern: rangePattern, options: [.caseInsensitive]) {
+            result = regex.stringByReplacingMatches(in: result, options: [], range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        
+        let singleTimePattern = "\\b\\d{1,2}:\\d{2}\\b"
+        if let regex = try? NSRegularExpression(pattern: singleTimePattern, options: []) {
+            result = regex.stringByReplacingMatches(in: result, options: [], range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        
+        return result
+    }
+    
+    private static func extractAndRemoveDayRanges(from text: inout String, currentMonth: Date) -> [Date] {
+        var dates: [Date] = []
+        let calendar = Calendar.current
+        let currentYear = calendar.component(.year, from: currentMonth)
+        
+        // Pattern 1: month name followed by day to day, e.g., "june 5 to 10"
+        let monthDayRangePattern = "\\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\s+(\\d{1,2})\\s*(?:to|through|till|-)\\s*(\\d{1,2})\\b"
+        if let regex = try? NSRegularExpression(pattern: monthDayRangePattern, options: [.caseInsensitive]) {
+            let nsString = text as NSString
+            var offset = 0
+            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+            for match in matches {
+                let adjustedRange = NSRange(location: match.range.location + offset, length: match.range.length)
+                let currentNSString = text as NSString
+                let matchedSubstr = currentNSString.substring(with: adjustedRange)
+                
+                if let subMatch = regex.firstMatch(in: matchedSubstr, options: [], range: NSRange(location: 0, length: matchedSubstr.count)) {
+                    let monthStr = (matchedSubstr as NSString).substring(with: subMatch.range(at: 1)).lowercased()
+                    let startStr = (matchedSubstr as NSString).substring(with: subMatch.range(at: 2))
+                    let endStr = (matchedSubstr as NSString).substring(with: subMatch.range(at: 3))
+                    
+                    if let monthInt = monthIndex(for: monthStr),
+                       let startDay = Int(startStr), let endDay = Int(endStr),
+                       startDay >= 1 && startDay <= 31 && endDay >= 1 && endDay <= 31 && startDay < endDay {
+                        
+                        var comps = DateComponents()
+                        comps.year = currentYear
+                        comps.month = monthInt
+                        
+                        for d in startDay...endDay {
+                            comps.day = d
+                            if let date = calendar.date(from: comps) {
+                                dates.append(calendar.startOfDay(for: date))
+                            }
+                        }
+                        
+                        let prevLength = text.count
+                        text = (text as NSString).replacingCharacters(in: adjustedRange, with: "")
+                        offset += text.count - prevLength
+                    }
+                }
+            }
+        }
+        
+        // Pattern 2: day to day of month, e.g., "5 to 10 of june"
+        let dayRangeMonthPattern = "\\b(\\d{1,2})\\s*(?:to|through|till|-)\\s*(\\d{1,2})\\s+of\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\b"
+        if let regex = try? NSRegularExpression(pattern: dayRangeMonthPattern, options: [.caseInsensitive]) {
+            let nsString = text as NSString
+            var offset = 0
+            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+            for match in matches {
+                let adjustedRange = NSRange(location: match.range.location + offset, length: match.range.length)
+                let currentNSString = text as NSString
+                let matchedSubstr = currentNSString.substring(with: adjustedRange)
+                
+                if let subMatch = regex.firstMatch(in: matchedSubstr, options: [], range: NSRange(location: 0, length: matchedSubstr.count)) {
+                    let startStr = (matchedSubstr as NSString).substring(with: subMatch.range(at: 1))
+                    let endStr = (matchedSubstr as NSString).substring(with: subMatch.range(at: 2))
+                    let monthStr = (matchedSubstr as NSString).substring(with: subMatch.range(at: 3)).lowercased()
+                    
+                    if let monthInt = monthIndex(for: monthStr),
+                       let startDay = Int(startStr), let endDay = Int(endStr),
+                       startDay >= 1 && startDay <= 31 && endDay >= 1 && endDay <= 31 && startDay < endDay {
+                        
+                        var comps = DateComponents()
+                        comps.year = currentYear
+                        comps.month = monthInt
+                        
+                        for d in startDay...endDay {
+                            comps.day = d
+                            if let date = calendar.date(from: comps) {
+                                dates.append(calendar.startOfDay(for: date))
+                            }
+                        }
+                        
+                        let prevLength = text.count
+                        text = (text as NSString).replacingCharacters(in: adjustedRange, with: "")
+                        offset += text.count - prevLength
+                    }
+                }
+            }
+        }
+        
+        // Pattern 3: plain day range like "select 5 to 10" (no month name, defaults to current month)
+        let plainDayRangePattern = "(select|remove|clear|delete|deselect|unselect|add|toggle)\\s+(\\d{1,2})\\s*(?:to|through|till|-)\\s*(\\d{1,2})\\b"
+        if let regex = try? NSRegularExpression(pattern: plainDayRangePattern, options: [.caseInsensitive]) {
+            let nsString = text as NSString
+            var offset = 0
+            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+            for match in matches {
+                let adjustedRange = NSRange(location: match.range.location + offset, length: match.range.length)
+                let currentNSString = text as NSString
+                let matchedSubstr = currentNSString.substring(with: adjustedRange)
+                
+                if let subMatch = regex.firstMatch(in: matchedSubstr, options: [], range: NSRange(location: 0, length: matchedSubstr.count)) {
+                    let startStr = (matchedSubstr as NSString).substring(with: subMatch.range(at: 2))
+                    let endStr = (matchedSubstr as NSString).substring(with: subMatch.range(at: 3))
+                    
+                    if let startDay = Int(startStr), let endDay = Int(endStr),
+                       startDay >= 1 && startDay <= 31 && endDay >= 1 && endDay <= 31 && startDay < endDay {
+                        
+                        let currentMonthInt = calendar.component(.month, from: currentMonth)
+                        var comps = DateComponents()
+                        comps.year = currentYear
+                        comps.month = currentMonthInt
+                        
+                        for d in startDay...endDay {
+                            comps.day = d
+                            if let date = calendar.date(from: comps) {
+                                dates.append(calendar.startOfDay(for: date))
+                            }
+                        }
+                        
+                        let replacementRange = subMatch.range(at: 2)
+                        let fullRangeToReplace = NSRange(location: adjustedRange.location + replacementRange.location,
+                                                         length: subMatch.range(at: 3).location + subMatch.range(at: 3).length - replacementRange.location)
+                        
+                        let prevLength = text.count
+                        text = (text as NSString).replacingCharacters(in: fullRangeToReplace, with: "")
+                        offset += text.count - prevLength
+                    }
+                }
+            }
+        }
+        
+        return dates
+    }
+    
+    private static func monthIndex(for monthStr: String) -> Int? {
+        let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        let longMonths = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+        if let idx = longMonths.firstIndex(of: monthStr) { return idx + 1 }
+        if let idx = months.firstIndex(of: monthStr) { return idx + 1 }
+        return nil
+    }
+    
+    private static func parseTimeRange(from text: String) -> ParsedTimeRange? {
+        let preprocessed = preprocessTimeWords(text)
+        let nsString = preprocessed as NSString
+        
+        // 1. Duration range pattern
+        let durationPattern = "\\b(?:for|log|track)?\\s*(\\d+(?:\\.\\d+)?)\\s*hours?\\s*(?:starting|beginning|at)?\\s*(?:at)?\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\b"
+        if let durRegex = try? NSRegularExpression(pattern: durationPattern, options: [.caseInsensitive]) {
+            if let match = durRegex.firstMatch(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length)) {
+                let durationStr = nsString.substring(with: match.range(at: 1))
+                let startHourStr = nsString.substring(with: match.range(at: 2))
+                let startMinStr = match.range(at: 3).location != NSNotFound ? nsString.substring(with: match.range(at: 3)) : nil
+                let startAMPM = match.range(at: 4).location != NSNotFound ? nsString.substring(with: match.range(at: 4)) : nil
+                
+                if let duration = Double(durationStr), var startHour = Int(startHourStr) {
+                    let startMin = Int(startMinStr ?? "") ?? 0
+                    
+                    if let ampm = startAMPM?.lowercased() {
+                        if ampm == "pm" && startHour < 12 { startHour += 12 }
+                        if ampm == "am" && startHour == 12 { startHour = 0 }
+                    } else {
+                        if startHour < 7 { startHour += 12 }
+                    }
+                    
+                    let startMinutes = startHour * 60 + startMin
+                    let endMinutes = startMinutes + Int(duration * 60)
+                    return ParsedTimeRange(startMinutes: startMinutes, endMinutes: min(endMinutes, 1440))
+                }
+            }
+        }
+        
+        // 2. Standard shift keyword match
+        if preprocessed.contains("standard shift") || preprocessed.contains("standard day") || preprocessed.contains("full day") {
+            return ParsedTimeRange(startMinutes: 9 * 60, endMinutes: 17 * 60) // 9:00 AM to 5:00 PM
+        }
+        
+        // 3. Range pattern
+        let pattern = "\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s*(?:to|till|until|-)\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\b"
+        if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+            if let match = regex.firstMatch(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length)) {
+                let startHourStr = nsString.substring(with: match.range(at: 1))
+                let startMinStr = match.range(at: 2).location != NSNotFound ? nsString.substring(with: match.range(at: 2)) : nil
+                let startAMPM = match.range(at: 3).location != NSNotFound ? nsString.substring(with: match.range(at: 3)) : nil
+                
+                let endHourStr = nsString.substring(with: match.range(at: 4))
+                let endMinStr = match.range(at: 5).location != NSNotFound ? nsString.substring(with: match.range(at: 5)) : nil
+                let endAMPM = match.range(at: 6).location != NSNotFound ? nsString.substring(with: match.range(at: 6)) : nil
+                
+                var startHour = Int(startHourStr) ?? 7
+                let startMin = Int(startMinStr ?? "") ?? 0
+                var endHour = Int(endHourStr) ?? 16
+                let endMin = Int(endMinStr ?? "") ?? 0
+                
+                if let ampm = startAMPM?.lowercased() {
+                    if ampm == "pm" && startHour < 12 { startHour += 12 }
+                    if ampm == "am" && startHour == 12 { startHour = 0 }
+                } else {
+                    if startHour < 7 { startHour += 12 }
+                }
+                
+                if let ampm = endAMPM?.lowercased() {
+                    if ampm == "pm" && endHour < 12 { endHour += 12 }
+                    if ampm == "am" && endHour == 12 { endHour = 0 }
+                } else {
+                    if endHour < startHour && endHour < 12 {
+                        endHour += 12
+                    } else if endHour < 7 {
+                        endHour += 12
+                    }
+                }
+                
+                return ParsedTimeRange(startMinutes: startHour * 60 + startMin, endMinutes: endHour * 60 + endMin)
+            }
+        }
+        
+        // 4. Single time fallback
+        let singleTimePattern = "\\b(\\d{1,2}):(\\d{2})\\b"
+        if let singleRegex = try? NSRegularExpression(pattern: singleTimePattern, options: []) {
+            let matches = singleRegex.matches(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length))
+            if matches.count == 1 {
+                let m = matches[0]
+                if let hour = Int(nsString.substring(with: m.range(at: 1))),
+                   let min = Int(nsString.substring(with: m.range(at: 2))) {
+                    if preprocessed.contains("till") || preprocessed.contains("to") {
+                        return ParsedTimeRange(startMinutes: 7 * 60, endMinutes: hour * 60 + min)
+                    } else {
+                        return ParsedTimeRange(startMinutes: hour * 60 + min, endMinutes: (hour + 9) * 60 + min)
+                    }
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    private static func parseRelativeDate(from text: String) -> Date? {
+        let lower = text.lowercased()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        
+        if lower.contains("tomorrow") {
+            return calendar.date(byAdding: .day, value: 1, to: today)
+        }
+        if lower.contains("today") {
+            return today
+        }
+        if lower.contains("yesterday") {
+            return calendar.date(byAdding: .day, value: -1, to: today)
+        }
+        
+        let weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+        for (index, dayName) in weekdays.enumerated() {
+            if lower.contains("next \(dayName)") {
+                let targetWeekday = index + 1
+                var comps = DateComponents()
+                comps.weekday = targetWeekday
+                if let nextDate = calendar.nextDate(after: Date(), matching: comps, matchingPolicy: .nextTime) {
+                    return calendar.startOfDay(for: nextDate)
+                }
+            }
+        }
+        return nil
+    }
+    
+    private static func parseDates(from text: String, currentMonth: Date) -> [Date] {
+        var parsedDates: [Date] = []
+        let calendar = Calendar.current
+        let currentYear = calendar.component(.year, from: currentMonth)
+        
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) {
+            let matches = detector.matches(in: text, options: [], range: NSRange(text.startIndex..., in: text))
+            for match in matches {
+                if let date = match.date {
+                    parsedDates.append(calendar.startOfDay(for: date))
+                }
+            }
+        }
+        
+        var normalizedDates: [Date] = []
+        for date in parsedDates {
+            var comps = calendar.dateComponents([.month, .day], from: date)
+            comps.year = currentYear
+            if let normalized = calendar.date(from: comps) {
+                normalizedDates.append(calendar.startOfDay(for: normalized))
+            } else {
+                normalizedDates.append(calendar.startOfDay(for: date))
+            }
+        }
+        
+        var unique: [Date] = []
+        for d in normalizedDates {
+            if !unique.contains(d) {
+                unique.append(d)
+            }
+        }
+        return unique
+    }
+    
+    private static func parseWeekdayPatterns(from text: String, currentMonth: Date) -> [Date] {
+        let lower = text.lowercased()
+        let calendar = Calendar.current
+        
+        guard let monthRange = calendar.range(of: .day, in: .month, for: currentMonth),
+              let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: currentMonth)) else {
+            return []
+        }
+        
+        var datesInMonth: [Date] = []
+        for day in 1...monthRange.count {
+            if let date = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth) {
+                datesInMonth.append(calendar.startOfDay(for: date))
+            }
+        }
+        
+        if lower.contains("weekday") {
+            return datesInMonth.filter { date in
+                let wd = calendar.component(.weekday, from: date)
+                return wd >= 2 && wd <= 6
+            }
+        }
+        
+        if lower.contains("weekend") {
+            return datesInMonth.filter { date in
+                let wd = calendar.component(.weekday, from: date)
+                return wd == 1 || wd == 7
+            }
+        }
+        
+        if lower.contains("all days") || lower.contains("entire month") || lower.contains("every day") || lower.contains("all of") {
+            return datesInMonth
+        }
+        
+        let weekdayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+        var selectedWeekdays: [Int] = []
+        
+        for (index, name) in weekdayNames.enumerated() {
+            if lower.contains(name) || lower.contains("\(name)s") {
+                selectedWeekdays.append(index + 1)
+            }
+        }
+        
+        if !selectedWeekdays.isEmpty {
+            return datesInMonth.filter { date in
+                let wd = calendar.component(.weekday, from: date)
+                return selectedWeekdays.contains(wd)
+            }
+        }
+        
+        return []
+    }
+    
+    private static func parseImplicitDaysAndRanges(from text: String) -> [Int] {
+        var days: [Int] = []
+        let rangePattern = "\\b(\\d{1,2})\\s*(?:to|through|till|-)\\s*(\\d{1,2})\\b"
+        
+        if let regex = try? NSRegularExpression(pattern: rangePattern, options: [.caseInsensitive]) {
+            let nsString = text as NSString
+            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+            for match in matches {
+                if let startDay = Int(nsString.substring(with: match.range(at: 1))),
+                   let endDay = Int(nsString.substring(with: match.range(at: 2))),
+                   startDay >= 1 && startDay <= 31 && endDay >= 1 && endDay <= 31 && startDay < endDay {
+                    days.append(contentsOf: Array(startDay...endDay))
+                }
+            }
+        }
+        
+        if days.isEmpty {
+            let singleDayPattern = "\\b(\\d{1,2})(?:st|nd|rd|th)?\\b"
+            if let regex = try? NSRegularExpression(pattern: singleDayPattern, options: [.caseInsensitive]) {
+                let nsString = text as NSString
+                let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+                for match in matches {
+                    if let day = Int(nsString.substring(with: match.range(at: 1))),
+                       day >= 1 && day <= 31 {
+                        let range = match.range
+                        let startIdx = max(0, range.location - 2)
+                        let endIdx = min(nsString.length, range.location + range.length + 4)
+                        let context = nsString.substring(with: NSRange(location: startIdx, length: endIdx - startIdx)).lowercased()
+                        if !context.contains("2026") && !context.contains("2025") {
+                            days.append(day)
+                        }
+                    }
+                }
+            }
+        }
+        
+        return days
     }
 }
 

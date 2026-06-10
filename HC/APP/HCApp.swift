@@ -3,7 +3,7 @@
 //  HC
 //
 //  ╔═══════════════════════════════════════════════════════════════╗
-//  ║  APPLICATION ENTRY POINT                                     ║
+//  ║  APPLICATION ENTRY POINT                                      ║
 //  ║                                                               ║
 //  ║  Bootstraps the HC (Hour Counter) app with a single           ║
 //  ║  WindowGroup scene. Enforces dark color scheme globally       ║

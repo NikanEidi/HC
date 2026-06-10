@@ -58,10 +58,14 @@ class TrackerViewModel {
             }
         } else {
             selectedDates.insert(dayStart)
-            let start = calendar.date(bySettingHour: 7, minute: 0, second: 0, of: dayStart) ?? dayStart
-            let end = calendar.date(bySettingHour: 16, minute: 0, second: 0, of: dayStart) ?? dayStart
-            sessions.append(WorkSession(date: dayStart, startTime: start, endTime: end))
-            sessions.sort { $0.date < $1.date }
+            
+            // Strictly prevent duplicate sessions for the same date
+            if !sessions.contains(where: { calendar.startOfDay(for: $0.date) == dayStart }) {
+                let start = calendar.date(bySettingHour: 7, minute: 0, second: 0, of: dayStart) ?? dayStart
+                let end = calendar.date(bySettingHour: 16, minute: 0, second: 0, of: dayStart) ?? dayStart
+                sessions.append(WorkSession(date: dayStart, startTime: start, endTime: end))
+                sessions.sort { $0.date < $1.date }
+            }
         }
     }
 

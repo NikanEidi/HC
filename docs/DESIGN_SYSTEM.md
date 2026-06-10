@@ -93,7 +93,7 @@ The `GlassmorphismBG` view renders 6 composited layers:
 
 ---
 
-## Dragon Art (v3.0)
+## Dragon Art (v3.0+)
 
 The ASCII dragon has been upgraded to an **ultra-detailed 30-row blueprint**
 rendered by the `DragonArtRenderer`. Each character is individually classified
@@ -160,6 +160,44 @@ Forge design system's cyberpunk aesthetic:
 
 ---
 
+## Voice Assistant UX
+
+The voice command engine follows the Forge design system for its
+terminal output, haptic feedback, and conversational personality.
+
+### Terminal Integration
+
+Voice assistant state is rendered in the ANSI terminal panel:
+
+| Element | Format | Color |
+|---------|--------|-------|
+| Status line | `Voice: ACTIVE \| Transcript: "..."` | Forge.cipher (status), Forge.frost (transcript) |
+| System logs | `[SYS] Voice Engine: ACTIVE. Parsing command stream...` | Forge.jade |
+| Error logs | `[ERR] Directive unrecognized: "..."` | Forge.crimson |
+| Vision speech | `[SYS] Vision: "I have selected the 5th for you."` | Forge.cipher |
+| NLP debug | `[NLP] Extracted: 2026-06-05` | Forge.steel |
+
+### Voice Personality
+
+The assistant speaks with a cyberpunk operator personality:
+- Addresses the user as "Nik"
+- Uses military/tech jargon: "optical matrix online", "ghost-click applied", "shifting calendar matrix"
+- Contextual responses: single-date vs multi-date, success vs failure
+- Error messages are throttled (8s cooldown) and varied (6 random phrases)
+
+### Haptic Feedback for Voice
+
+| Event | Haptic Type |
+|-------|-------------|
+| Wake word detected | Medium impact |
+| Command executed successfully | Success notification |
+| Command failed to parse | Error notification |
+| Date toggled via voice | Rigid impact |
+| View switched via voice | Rigid impact |
+| Month navigated via voice | Rigid impact |
+
+---
+
 ## Typography
 
 All text uses the system monospaced font at various weights:
@@ -199,12 +237,14 @@ All text uses the system monospaced font at various weights:
 
 ### Haptic Feedback
 - **Light**: Calendar date tap, navigation arrows
-- **Medium**: Flip button, slider drag end
+- **Medium**: Flip button, slider drag end, wake word detected
 - **Light (0.3 intensity)**: Each slider snap increment
-- **Success notification**: Clipboard copy
+- **Rigid**: Voice-triggered date toggle, month navigation, view switch
+- **Success notification**: Clipboard copy, successful voice command
+- **Error notification**: Failed voice command parse
 
 ### Hover Effects (Apple Pencil)
-- `.hoverEffect(.lift)`: All buttons (flip, export, copy, nav arrows)
+- `.hoverEffect(.lift)`: All buttons (flip, export, copy, nav arrows, mic, camera)
 - `.hoverEffect(.highlight)`: Calendar day cells
 - `onHover`: Calendar cells (manual opacity change)
 
@@ -213,6 +253,12 @@ All text uses the system monospaced font at various weights:
 - Hover glow on UI elements when cursor overlaps their frame
 - Click ripple animation on pinch gesture
 - Cursor fades when hand tracking is lost
+
+### Voice Feedback
+- Wake word: medium haptic + "Hey Nik, how can I help you today?"
+- Successful command: success haptic + contextual TTS response
+- Failed command: error haptic + throttled error phrase
+- Session timeout: silent return to STANDBY (no audio)
 
 ### Animations
 - Selection scale: 1.03x with spring (0.22s response, 0.7 damping)

@@ -3,9 +3,10 @@
 ## Overview
 
 HC follows the **MVVM (Model-View-ViewModel)** architecture pattern using SwiftUI's
-native `@Observable` macro for reactive state management. In v3.0, the architecture
-extends with a **gesture pipeline** that bridges the front-facing camera to the
-SwiftUI view hierarchy via hit-testing and preference keys.
+native `@Observable` macro for reactive state management. In v4.0, the architecture
+extends with two independent input pipelines: a **voice command engine** that parses
+natural language into ViewModel actions, and a **gesture pipeline** that bridges the
+front-facing camera to the SwiftUI view hierarchy via hit-testing and preference keys.
 
 ```
 +------------------+     +-------------------+     +------------------+
@@ -18,29 +19,47 @@ SwiftUI view hierarchy via hit-testing and preference keys.
 |  - endTime       |     |                   |     |  - Terminal       |
 |  - duration      |     |  + toggleDate()   |     |                  |
 +------------------+     |  + totalHours()   |     +------------------+
-                          |  + report()       |            ^
-                          +-------------------+            |
-                                                           |
-                          +-------------------+            |
-                          | GESTURE PIPELINE  |            |
-                          |                   |            |
-                          | HandGestureManager|----------->|
-                          | - AVFoundation    |  GestureCursorOverlay
-                          | - Vision          |  (hit-testing via
-                          | - One-Euro Filter |   PreferenceKeys)
-                          +-------------------+
+                          |  + report()       |            ^    ^
+                          |  + updateSession  |            |    |
+                          |    Times()        |            |    |
+                          +-------------------+            |    |
+                                ^         ^                |    |
+                                |         |                |    |
+                  +-------------+    +----+---------+      |    |
+                  | VOICE ENGINE|    | GESTURE      |      |    |
+                  |             |    | PIPELINE     |      |    |
+                  | VoiceCommand|    |              |      |    |
+                  | Manager     |    | HandGesture  |------+    |
+                  | - Speech    |    | Manager      | GestureCursorOverlay
+                  | - NLP       |    | - AVFoundation|  (hit-testing via
+                  | - TTS       |    | - Vision     |   PreferenceKeys)
+                  +-------------+    | - One-Euro   |
+                                     +--------------+
 ```
 
 ## Data Flow
 
+### Touch / Pencil Input (primary)
+
 1. **User taps a date** in `GlassCalendarView`
-2. View calls `viewModel.toggleDate(date)` 
+2. View calls `viewModel.toggleDate(date)`
 3. ViewModel inserts a `WorkSession` with default 7:00-16:00 times
 4. `@Observable` triggers SwiftUI to re-render all dependent views
 5. Terminal panel (`TrackerHomeView.render()`) rebuilds its line array
 6. Timesheet (`TimeInputTableView`) shows a new row with sliders
 
-**Gesture flow** (alternative input path):
+### Voice Input
+
+1. `VoiceCommandManager` runs a continuous `SFSpeechRecognizer` session
+2. Partial transcription results are checked for the wake word ("Hey Vision")
+3. On wake word match, system enters active session and awaits command
+4. Silence timer fires after speech stops (2.5s in active mode)
+5. `extractIntent()` classifies the command (date selection, time mutation, navigation, etc.)
+6. Intent is dispatched to `TrackerViewModel` actions (same mutations as touch input)
+7. `AVSpeechSynthesizer` speaks a contextual confirmation
+8. Recognition session restarts seamlessly with zero-gap request swapping
+
+### Gesture Input (alternative)
 
 1. `HandGestureManager` captures frames from the front camera via AVFoundation
 2. Vision framework detects hand pose landmarks (`VNDetectHandPoseRequest`)
@@ -107,6 +126,7 @@ HC/
 |   |       Contains GestureCursorOverlay for gesture-to-UI
 |   |       mapping with hit-testing against PreferenceKey frames.
 |   |       Contains TLine/TLineType models for terminal rendering.
+|   |       Hosts VoiceCommandManager as @StateObject.
 |   |
 |   +-- Timesheet/
 |       |-- TimeInputTableView.swift
@@ -127,14 +147,103 @@ HC/
     |-- ClipboardManager.swift
     |   Static utility. UIPasteboard + haptic.
     |
-    +-- HandGestureManager.swift
-        Front-camera gesture engine (580 lines).
-        AVFoundation capture session + Vision framework.
-        Tracks index finger position, detects pinch (click),
-        wrist rotation (flip), directional swipes, hand depth.
-        One-Euro adaptive filter (OneEuroFilter, OneEuroFilter2D).
-        Support types: FrameDelegate, AngleSample.
+    |-- HandGestureManager.swift
+    |   Front-camera gesture engine.
+    |   AVFoundation capture session + Vision framework.
+    |   Tracks index finger position, detects pinch (click),
+    |   wrist rotation (flip), directional swipes, hand depth.
+    |   One-Euro adaptive filter (OneEuroFilter, OneEuroFilter2D).
+    |   Support types: FrameDelegate, AngleSample.
+    |
+    +-- VoiceCommandManager.swift
+        Continuous voice assistant (~1600 lines).
+        SFSpeechRecognizer for wake word + command transcription.
+        NLP intent parser: regex date/time extraction,
+        fuzzy keyword matching, pronoun resolution,
+        weekday pattern detection, month navigation.
+        AVSpeechSynthesizer with cached premium voice.
+        Thread-safe SpeechRequestHolder for audio buffering.
+        CommandIntent enum: selectDate, removeDate, timeMutation,
+        navigateMonth, activateCamera, deactivateCamera,
+        copyReport, switchView, unknown.
 ```
+
+## Voice System Architecture
+
+The voice command engine transforms continuous audio into ViewModel actions
+through a multi-stage pipeline:
+
+```
+┌────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│  AVAudioEngine │───>│ SFSpeechRecognizer│───>│  Wake Word       │
+│  Hardware Tap  │    │ Partial Results  │    │  Detection       │
+│  (Bus 0, 1024) │    │ (en-US locale)   │    │  (Levenshtein)   │
+└────────────────┘    └──────────────────┘    └────────┬─────────┘
+                                                        │
+                                                        v
+┌────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│  TrackerVM     │<───│  Intent Dispatch │<───│  NLP Parser      │
+│  Action Trigger│    │  (CommandIntent  │    │  extractIntent() │
+│                │    │   enum switch)   │    │  - date regex    │
+└────────────────┘    └──────────────────┘    │  - time regex    │
+        │                                      │  - NSDataDetector│
+        v                                      │  - keyword match │
+┌────────────────┐                             └──────────────────┘
+│  AVSpeech      │
+│  Synthesizer   │
+│  (TTS Response)│
+└────────────────┘
+```
+
+### State Machine
+
+The voice engine operates as a two-state machine:
+
+1. **STANDBY** -- Passive listening. Recognition session runs continuously.
+   Partial transcription results are checked for the wake word only.
+   No commands are parsed; no errors are spoken.
+
+2. **ACTIVE** -- Triggered by wake word detection. The assistant greets
+   the user (with a 600ms delay to allow same-breath commands), then
+   waits for a command. A silence timer (2.5s) executes the accumulated
+   transcript as a command. An absolute timeout (8s) returns to STANDBY.
+
+### Zero-Gap Session Restart
+
+Speech recognition sessions have a 1-minute limit imposed by Apple.
+When a session ends (final result or error), a new session must start
+immediately to maintain continuous listening. The engine creates and
+installs the new `SFSpeechAudioBufferRecognitionRequest` before
+tearing down the old session, ensuring the audio tap always has a
+valid request to write to. This eliminates the audio gap that previously
+caused the first wake word attempt to fail.
+
+### Echo Suppression
+
+When the TTS synthesizer is speaking, the recognition session is
+cancelled entirely to prevent the engine from transcribing its own
+voice output. After speech finishes (`AVSpeechSynthesizerDelegate`),
+a new recognition session starts with a 4-second silence timer to
+allow the user to respond.
+
+### NLP Intent Classification
+
+`extractIntent()` evaluates commands in priority order:
+
+1. **Switch view** -- "show timesheet", "switch to calendar"
+2. **Camera toggle** -- "open your eyes", "close your eyes"
+3. **Clipboard copy** -- "copy", "export"
+4. **Bulk deselect** -- "remove all", "deselect all", "clear all"
+5. **Navigate month** -- "go to July", "show September"
+6. **Date resolution** -- relative dates, NSDataDetector, regex patterns, weekday patterns, implicit day numbers
+7. **Pronoun resolution** -- "remove them", "set those" -> last selected dates
+8. **Time mutation** -- "9 to 5", "8 hours starting at 9 AM", "standard shift"
+9. **Select/Remove dispatch** -- based on verb keywords + resolved dates
+10. **Unknown** -- fallback with throttled error response (8s cooldown)
+
+Number preprocessing (`preprocessNumbers()`) converts spoken ordinals
+("twenty-first" -> "21") but is scoped exclusively to date parsing,
+preventing corruption of intent keywords.
 
 ## Gesture System Architecture
 
@@ -166,10 +275,10 @@ The gesture pipeline transforms raw camera frames into precise UI interactions:
 - Parameters: `minCutoff`, `beta`, `dCutoff` tuned for responsive cursor tracking
 
 ### Gesture Recognition
-- **Pinch**: Distance between thumb tip and index tip below threshold → click
-- **Wrist rotation**: Angle change from `AngleSample` buffer → card flip
-- **Swipe**: Velocity + direction of index finger movement → calendar navigation
-- **Depth**: Hand bounding box size relative to frame → zoom factor
+- **Pinch**: Distance between thumb tip and index tip below threshold -> click
+- **Wrist rotation**: Angle change from `AngleSample` buffer -> card flip
+- **Swipe**: Velocity + direction of index finger movement -> calendar navigation
+- **Depth**: Hand bounding box size relative to frame -> zoom factor
 
 ### Hit-Testing
 - Views report their frames via `PreferenceKey` types (defined in `TimesheetPreferenceKeys.swift`)
@@ -184,6 +293,34 @@ The gesture pipeline transforms raw camera frames into precise UI interactions:
 `@Observable` (iOS 17+) provides fine-grained property tracking.
 Only views reading a specific property re-render when it changes.
 `@StateObject` would cause full re-renders on any property mutation.
+
+### Why @StateObject for VoiceCommandManager?
+
+`VoiceCommandManager` uses `@MainActor` + `ObservableObject` (Combine-based)
+rather than `@Observable` because it manages long-lived audio resources
+(AVAudioEngine, SFSpeechRecognizer, AVSpeechSynthesizer) that require
+careful lifecycle management tied to the SwiftUI view lifecycle.
+`@StateObject` ensures the manager survives view re-renders and is
+properly torn down when the view is dismissed.
+
+### Why zero-gap session restart?
+
+Apple's speech recognition sessions have a ~1 minute limit. When a
+session ends, the audio tap continues writing buffers to
+`SpeechRequestHolder.request`. If `request` is nil during the gap
+between old session teardown and new session setup, those buffers
+are silently dropped. By creating and installing the new request
+before cancelling the old session, the audio tap always has a valid
+target -- eliminating the "first attempt fails" problem.
+
+### Why exact matching for short keywords?
+
+Levenshtein fuzzy matching on short words (<=5 characters) produces
+excessive false positives. "copy" would match "cop", "hop", etc.
+Words 5 characters or shorter now require exact substring match,
+while longer words (6+ characters) still get fuzzy matching at an
+0.80 similarity threshold. This dramatically reduces false activations
+while preserving tolerance for speech recognition garbling on longer words.
 
 ### Why binding factories instead of @Binding?
 

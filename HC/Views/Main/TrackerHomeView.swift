@@ -67,8 +67,6 @@ struct TrackerHomeView: View {
     /// Global frame of the COPY button (from CopyButtonFrameKey).
     @State private var copyButtonFrame: CGRect = .zero
 
-    /// Global frame of the calendar grid (from CalendarGridFrameKey).
-    @State private var calendarGridFrame: CGRect = .zero
 
     /// Global frames of all visible time sliders (from SliderFramesKey).
     @State private var sliderFrames: [SliderFrameInfo] = []
@@ -114,6 +112,8 @@ struct TrackerHomeView: View {
                     flipped: flipped,
                     scrollTargetIndex: $scrollTargetIndex,
                     sessionCount: vm.sessions.count,
+                    daysInMonthCount: vm.daysInMonth.count,
+                    rootGlobalFrame: geo.frame(in: .global),
                     onAction: { dispatchTappableAction($0) },
                     onToggleDate: { vm.toggleDate($0) },
                     onCopy: {
@@ -178,13 +178,6 @@ struct TrackerHomeView: View {
                     }
                 }
             }
-            .onPreferenceChange(CalendarGridFrameKey.self) { newFrame in
-                if calendarGridFrame != newFrame {
-                    DispatchQueue.main.async {
-                        self.calendarGridFrame = newFrame
-                    }
-                }
-            }
             .onPreferenceChange(SliderFramesKey.self) { newFrames in
                 if sliderFrames != newFrames {
                     DispatchQueue.main.async {
@@ -242,7 +235,7 @@ struct TrackerHomeView: View {
                 Circle().fill(Forge.jade).frame(width: 11, height: 11)
             }.padding(.leading, 18)
             Spacer()
-            Text("HC://DRAGON-TERMINAL v2.0")
+            Text("HC://DRAGON-TERMINAL v3.1")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(Forge.steel.opacity(0.45)).tracking(1.5)
             Spacer()
@@ -505,18 +498,18 @@ struct TrackerHomeView: View {
             "  |   _/############//  (o::o)  \\############\\_            |",
             "  |  /#############((    \\//    ))#############\\           |",
             "  | -###############\\\\  (    )  //###############-         |",
-            "  |-#################\\\\ / VV \\ //#################-        |",
-            "  |-###################\\\\/    \\\\//###################-     |",
-            "  |_#/|##########/\\######(  /\\  )######/\\##########|\\#_    |",
+            "  |-#################\\\\ / VV \\ //#################-       |",
+            "  |-###################\\\\/    \\\\//###################-    |",
+            "  |_#/|##########/\\######(  /\\  )######/\\##########|\\#_   |",
             "  ||/  |#/\\#/\\#/\\  \\#/\\##\\ |  | /##/\\#/ /\\#/\\#/\\#|  \\|     |",
             "  |`   |/  V  V `   V \\#\\| |  | |/#/ V  ` V  V  \\|   `     |",
-            "  |    `   `  `      ` / | |  | | \\ `     `  `   `         |",
+            "  |    `   `  `      ` / | |  | | \\ `     `  `   `        |",
             "  |                    (  | |  | |  )                      |",
-            "  |                   __\\ | |  | | /__                     |",
+            "  |                   __\\ | |  | | /__                    |",
             "  |                  (vvv(VVV)(VVV)vvv)                    |",
             "  |                                                        |",
             "  +--------------------------------------------------------+",
-            "  | [BLUEPRINT v2.0]        [CORE_CORE]       [SCALE: 100] |",
+            "  | [BLUEPRINT v3.1]        [CORE_CORE]       [SCALE: 100] |",
             "  +--------------------------------------------------------+"
         ]
 
@@ -561,7 +554,7 @@ struct TrackerHomeView: View {
         l.append(TLine(n: n, t: "", c: .clear, ln: false)); n += 1
 
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        l.append(TLine(n: n, t: "  [SYS] Midnight Forge v2.0 -- \(df.string(from: Date()))", c: Forge.steel.opacity(0.25), ln: true)); n += 1
+        l.append(TLine(n: n, t: "  [SYS] Midnight Forge v3.1 -- \(df.string(from: Date()))", c: Forge.steel.opacity(0.25), ln: true)); n += 1
         for mod in ["Calendar engine", "Haptic subsystem", "Clipboard bridge", "Pencil input", "Glitch renderer"] {
             let pad = String(repeating: ".", count: 30 - mod.count)
             l.append(TLine(n: n, t: "  [SYS] \(mod) \(pad) [OK]", c: Forge.jade.opacity(0.35), ln: true)); n += 1
@@ -719,6 +712,10 @@ struct GestureCursorOverlay: View {
     @Binding var scrollTargetIndex: Int?
     let sessionCount: Int
     
+    
+    let daysInMonthCount: Int
+    let rootGlobalFrame: CGRect
+    
     let onAction: (String) -> Void
     let onToggleDate: (Date) -> Void
     let onCopy: () -> Void
@@ -735,6 +732,10 @@ struct GestureCursorOverlay: View {
     @State private var isDraggingList = false
     @State private var dragListStartY: CGFloat = 0
     @State private var dragListStartScrollIndex: Int = 0
+
+    // Locked hover targets at pinch-down to prevent release drift
+    @State private var lockedHoveredElementID: String? = nil
+    @State private var lockedGestureHoveredDate: Date? = nil
 
     var body: some View {
         ZStack {
@@ -755,45 +756,59 @@ struct GestureCursorOverlay: View {
                 y: pos.y * windowSize.height
             )
             if isDown {
+                // Lock the hover targets immediately at pinch-down to prevent coordinate drift during release
+                lockedHoveredElementID = hoveredElementID
+                lockedGestureHoveredDate = gestureHoveredDate
+
                 var hitSlider = false
                 
-                // Find the closest slider frame mathematically to avoid picking wrong from/to
-                var closestSlider: SliderFrameInfo? = nil
-                var minSliderDistY: CGFloat = CGFloat.infinity
-                
-                for slider in sliderFrames {
-                    let dx = max(slider.frame.minX - globalPos.x, 0, globalPos.x - slider.frame.maxX)
-                    let dy = max(slider.frame.minY - globalPos.y, 0, globalPos.y - slider.frame.maxY)
-                    
-                    // Very generous thresholds to make selection effortless:
-                    // 150pt horizontally and 60pt vertically
-                    if dx < 150.0 && dy < 60.0 {
-                        if dy < minSliderDistY {
-                            minSliderDistY = dy
-                            closestSlider = slider
+                // 1. First check if we were hovering over a slider
+                if flipped, let hoverId = hoveredElementID, hoverId.hasPrefix("slider_") {
+                    let parts = hoverId.split(separator: "_")
+                    if parts.count == 3,
+                       let sessionUUID = UUID(uuidString: String(parts[1])) {
+                        let isStart = parts[2] == "start"
+                        if let matchedSlider = sliderFrames.first(where: { $0.sessionID == sessionUUID && $0.isStartSlider == isStart }) {
+                            activeDraggingSlider = matchedSlider
+                            hitSlider = true
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         }
                     }
                 }
                 
-                if let slider = closestSlider {
-                    activeDraggingSlider = slider
-                    hitSlider = true
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                // 2. Fallback to closest slider mathematically if no hover lock
+                if flipped, !hitSlider {
+                    var closestSlider: SliderFrameInfo? = nil
+                    var minSliderDistY: CGFloat = CGFloat.infinity
+                    
+                    for slider in sliderFrames {
+                        let dx = max(slider.frame.minX - globalPos.x, 0, globalPos.x - slider.frame.maxX)
+                        let dy = max(slider.frame.minY - globalPos.y, 0, globalPos.y - slider.frame.maxY)
+                        
+                        // Generous horizontal and vertical thresholds
+                        if dx < 150.0 && dy < 45.0 {
+                            if dy < minSliderDistY {
+                                minSliderDistY = dy
+                                closestSlider = slider
+                            }
+                        }
+                    }
+                    
+                    if let slider = closestSlider {
+                        activeDraggingSlider = slider
+                        hitSlider = true
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    }
                 }
                 
                 // If not dragging a slider, lock the cursor position or drag-scroll the timesheet list
                 if !hitSlider {
                     if flipped {
-                        // Pinching down on the timesheet card area (left side) scrolls it
-                        let cardWidth = min(windowSize.width * 0.45, 490.0)
-                        if globalPos.x < cardWidth {
-                            isDraggingList = true
-                            dragListStartY = globalPos.y
-                            dragListStartScrollIndex = scrollTargetIndex ?? 0
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.25)
-                        } else {
-                            frozenCursorPosition = globalPos
-                        }
+                        // Pinching anywhere on the timesheet card area (that isn't a slider) scrolls it
+                        isDraggingList = true
+                        dragListStartY = globalPos.y
+                        dragListStartScrollIndex = scrollTargetIndex ?? 0
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.25)
                     } else {
                         frozenCursorPosition = globalPos
                     }
@@ -802,6 +817,13 @@ struct GestureCursorOverlay: View {
                 activeDraggingSlider = nil
                 frozenCursorPosition = nil
                 isDraggingList = false
+                
+                // Dispatch resetting of locked targets to the next run loop pass
+                // so that click handlers can safely consume them first
+                DispatchQueue.main.async {
+                    lockedHoveredElementID = nil
+                    lockedGestureHoveredDate = nil
+                }
             }
         }
     }
@@ -859,9 +881,13 @@ struct GestureCursorOverlay: View {
     }
 
     private func updateHoverState(_ pos: CGPoint) {
-        let globalPos = CGPoint(
+        let localPos = CGPoint(
             x: pos.x * windowSize.width,
             y: pos.y * windowSize.height
+        )
+        let globalPos = CGPoint(
+            x: rootGlobalFrame.minX + localPos.x,
+            y: rootGlobalFrame.minY + localPos.y
         )
 
         // ── 1. If currently dragging a time slider, update it and return ──
@@ -883,9 +909,8 @@ struct GestureCursorOverlay: View {
 
         // ── 2. If currently dragging the timesheet list, scroll it and return ──
         if isDraggingList {
-            let deltaY = globalPos.y - dragListStartY
-            let rowsToScroll = Int(deltaY / 30.0)
-            let targetIndex = max(0, min(sessionCount - 1, dragListStartScrollIndex - rowsToScroll))
+            let deltaY = (globalPos.y - dragListStartY) / 15.0
+            let targetIndex = max(0, min(sessionCount - 1, dragListStartScrollIndex - Int(deltaY)))
             if targetIndex != scrollTargetIndex {
                 scrollTargetIndex = targetIndex
                 UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.35)
@@ -896,14 +921,30 @@ struct GestureCursorOverlay: View {
         // ── 3. If cursor is locked, do not update hover targets ──
         if frozenCursorPosition != nil { return }
 
+        // ── Check if hovering over any slider ──
+        var hoveredSliderID: String? = nil
+        var minSliderDY: CGFloat = CGFloat.infinity
+        if flipped {
+            for slider in sliderFrames {
+                let dx = max(slider.frame.minX - globalPos.x, 0, globalPos.x - slider.frame.maxX)
+                let dy = max(slider.frame.minY - globalPos.y, 0, globalPos.y - slider.frame.maxY)
+                if dx < 150.0 && dy < 35.0 {
+                    if dy < minSliderDY {
+                        minSliderDY = dy
+                        hoveredSliderID = "slider_\(slider.sessionID.uuidString)_\(slider.isStartSlider ? "start" : "end")"
+                    }
+                }
+            }
+        }
+
         // ── 4. Precision Target Matching ──
-        let foundHover = findTargetElement(at: globalPos)
+        let foundHover = hoveredSliderID ?? findTargetElement(at: globalPos)
         hoveredElementID = foundHover
 
         // ── Map hovered element to calendar date if applicable ──
         if let hoverId = foundHover, hoverId.hasPrefix("date_"),
-           let indexStr = hoverId.split(separator: "_").last,
-           let index = Int(indexStr) {
+                  let indexStr = hoverId.split(separator: "_").last,
+                  let index = Int(indexStr) {
             gestureHoveredDate = resolveDate(index)
         } else {
             gestureHoveredDate = nil
@@ -920,36 +961,48 @@ struct GestureCursorOverlay: View {
     private func handleClick() {
         if isDraggingList { return }
 
-        // Proactively freeze cursor position immediately if not already frozen to prevent click coordinate drift
-        let pos = gesture.fingerPosition
-        let globalPos = CGPoint(
-            x: pos.x * windowSize.width,
-            y: pos.y * windowSize.height
-        )
-        if frozenCursorPosition == nil {
-            frozenCursorPosition = globalPos
+        // 1. Prioritize executing the action on the locked target that was determined when the pinch started
+        let targetId = lockedHoveredElementID ?? hoveredElementID
+        let targetDate = lockedGestureHoveredDate ?? gestureHoveredDate
+        
+        // Clear locked targets immediately so they don't persist
+        lockedHoveredElementID = nil
+        lockedGestureHoveredDate = nil
+
+        if let id = targetId {
+            onAction(id)
+            return
         }
+
+        if !flipped, let date = targetDate {
+            onToggleDate(date)
+            return
+        }
+
+        // Fallback: use frozen cursor position or current position
+        let localPos = frozenCursorPosition ?? CGPoint(
+            x: gesture.fingerPosition.x * windowSize.width,
+            y: gesture.fingerPosition.y * windowSize.height
+        )
+        let pos = CGPoint(
+            x: rootGlobalFrame.minX + localPos.x,
+            y: rootGlobalFrame.minY + localPos.y
+        )
 
         // Fire ripple animation
         withAnimation(.easeOut(duration: 0.35)) { clickRipple = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { clickRipple = false }
 
-        // ── 1. Check registered tappable elements (buttons + calendar days) ──
-        if let targetId = findTargetElement(at: globalPos) {
+        // ── 2. Check registered tappable elements fallback ──
+        if let targetId = findTargetElement(at: pos) {
             onAction(targetId)
             return
         }
 
-        // ── 2. Check copy button (in timesheet view) fallback ──
-        let expandedCopy = copyButtonFrame.insetBy(dx: -20, dy: -20)
-        if flipped, expandedCopy.contains(globalPos) {
+        // ── 3. Check copy button (in timesheet view) fallback ──
+        let expandedCopy = copyButtonFrame.insetBy(dx: -25, dy: -25)
+        if flipped, expandedCopy.contains(pos) {
             onCopy()
-            return
-        }
-
-        // ── 3. Check calendar day cells ──
-        if !flipped, let date = gestureHoveredDate {
-            onToggleDate(date)
             return
         }
     }
@@ -969,13 +1022,13 @@ struct GestureCursorOverlay: View {
             return exactMatches.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })?.id
         }
         
-        // Close matches within 15 points
+        // Close matches within 25 points for easier target acquisition
         var closestId: String? = nil
         var minDistance: CGFloat = CGFloat.infinity
         
         for el in activeElements {
             let dist = distanceToFrame(globalPos, el.frame)
-            if dist < 15.0 && dist < minDistance {
+            if dist < 25.0 && dist < minDistance {
                 minDistance = dist
                 closestId = el.id
             }

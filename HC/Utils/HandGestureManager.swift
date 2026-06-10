@@ -93,10 +93,11 @@ final class HandGestureManager {
 
     // ── Private: Smoothing ──
     
-    private let oneEuroFilter = OneEuroFilter2D(minCutoff: 1.0, beta: 0.20, dCutoff: 1.0)
-    /// Tracking gain centered on 0.5. Reduced from 1.5→1.25 for
-    /// better calendar precision while still reaching screen edges.
-    private let trackingGain: CGFloat = 1.25
+    // Increased smoothing parameters for a slower, more stable cursor
+    private let oneEuroFilter = OneEuroFilter2D(minCutoff: 0.20, beta: 0.015, dCutoff: 1.0)
+    /// Tracking gain centered on 0.5. Reduced to 1.05 for
+    /// better stability.
+    private let trackingGain: CGFloat = 1.05
 
     // ── Private: Click Detection ──
 
@@ -205,6 +206,7 @@ final class HandGestureManager {
         if let existing = session, existing.isRunning { return }
 
         let s = AVCaptureSession()
+        s.automaticallyConfiguresApplicationAudioSession = false
 
         guard let cam = AVCaptureDevice.default(
                   .builtInWideAngleCamera, for: .video, position: .front),
