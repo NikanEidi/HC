@@ -49,6 +49,3 @@ Package.resolved
 *.tmp
 Thumbs.db
 
-# Secrets
-**/Secrets.swift
-
