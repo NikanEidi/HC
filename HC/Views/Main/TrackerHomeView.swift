@@ -140,6 +140,12 @@ struct TrackerHomeView: View {
                         gesture.startSession()
                     }
                 }
+                voiceManager.onDeactivateCamera = {
+                    if cameraActive {
+                        cameraActive = false
+                        gesture.stopSession()
+                    }
+                }
                 voiceManager.onSwitchView = { showTimesheet in
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                         flipped = showTimesheet

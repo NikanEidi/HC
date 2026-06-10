@@ -29,6 +29,7 @@ enum CommandIntent {
     case timeMutation(dates: [Date], startMinutes: Int, endMinutes: Int)
     case navigateMonth(targetMonth: Date)
     case activateCamera
+    case deactivateCamera
     case copyReport
     case switchView(showTimesheet: Bool)
     case unknown(command: String)
@@ -47,6 +48,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // ── External Context & Callbacks ──
     var hoveredDate: Date? = nil
     var onActivateCamera: (() -> Void)?
+    var onDeactivateCamera: (() -> Void)?
     var onSwitchView: ((Bool) -> Void)?
     private var viewModel: TrackerViewModel?
     
@@ -654,6 +656,13 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             speak(text: "Optical matrix online. You have the conn, Nik.")
             return true
             
+        case .deactivateCamera:
+            addLog("[SYS] Optical sensors disengaged. Air-gesture tracking: OFFLINE.")
+            triggerRigidHaptic()
+            onDeactivateCamera?()
+            speak(text: "Optical matrix offline, Nik.")
+            return true
+            
         case .copyReport:
             let report = vm.generateReportString()
             if !report.isEmpty {
@@ -843,9 +852,12 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
         }
         
-        // 1. Camera activation
-        if fuzzyContains(lower, target: "open your eyes") || fuzzyContains(lower, target: "open eyes") {
+        // 1. Camera activation / deactivation
+        if fuzzyContains(lower, target: "open your eyes") || fuzzyContains(lower, target: "open eyes") || fuzzyContains(lower, target: "open your vision") || fuzzyContains(lower, target: "open vision") {
             return .activateCamera
+        }
+        if fuzzyContains(lower, target: "close your eyes") || fuzzyContains(lower, target: "close eyes") || fuzzyContains(lower, target: "close your vision") || fuzzyContains(lower, target: "close vision") {
+            return .deactivateCamera
         }
         
         // 2. Clipboard copy
