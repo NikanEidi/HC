@@ -62,6 +62,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private var activeTimeoutTask: Task<Void, Never>?
     private var greetDelayTask: Task<Void, Never>?
     
+    // ── Conversational Context & Memory ──
+    private var lastSelectedDates: [Date] = []
+    
     // ── Speech Synthesis Pipeline ──
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var isSynthesizerSpeaking = false
@@ -408,6 +411,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             df.dateFormat = "MMMM"
             let monthNameUpper = df.string(from: targetMonth).uppercased()
             addLog("[SYS] Shifting calendar matrix to \(monthNameUpper)... [OK]")
+            speak(text: "Shifting your calendar to \(formatMonthNatural(targetMonth)), Nik.")
             
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 vm.currentMonth = targetMonth
@@ -427,6 +431,11 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                     addLog("[SYS] Ghost-click applied to day \(day).")
                 }
             }
+            if dates.count == 1 {
+                speak(text: "I have selected \(formatDateNatural(dates[0])) for you.")
+            } else {
+                speak(text: "I've highlighted those \(dates.count) dates on your calendar, Nik.")
+            }
             return true
             
         case .removeDate(let dates):
@@ -445,6 +454,11 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 }
             }
             if count > 0 {
+                if dates.count == 1 {
+                    speak(text: "Alright, I've cleared the session for \(formatDateNatural(dates[0])).")
+                } else {
+                    speak(text: "Done. I've cleared those \(count) sessions, Nik.")
+                }
                 return true
             } else {
                 addLog("[ERR] Specified dates were not active.")
@@ -455,6 +469,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         case .timeMutation(let dates, let start, let end):
             let startStr = String(format: "%02d:%02d", start / 60, start % 60)
             let endStr = String(format: "%02d:%02d", end / 60, end % 60)
+            let timePhrase = formatTimeRangeNatural(start: start, end: end)
             
             if !dates.isEmpty {
                 for date in dates {
@@ -472,6 +487,12 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 }
                 let dateStr = dates.map { formatDateShort($0) }.joined(separator: ", ")
                 addLog("[OK] Set \(dateStr) from \(startStr) to \(endStr).")
+                
+                if dates.count == 1 {
+                    speak(text: "I've updated the hours for \(formatDateNatural(dates[0])) to \(timePhrase).")
+                } else {
+                    speak(text: "I've updated those sessions to \(timePhrase) for you.")
+                }
                 return true
             } else {
                 if let hovered = hoveredDate, vm.isSelected(hovered) {
@@ -480,6 +501,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                         vm.updateSessionTimes(for: hovered, startMinutes: start, endMinutes: end)
                     }
                     addLog("[OK] Set hovered date to \(startStr) till \(endStr).")
+                    speak(text: "I've set the hovered session to \(timePhrase), Nik.")
                     return true
                 } else if !vm.sessions.isEmpty {
                     for session in vm.sessions {
@@ -489,6 +511,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                         }
                     }
                     addLog("[OK] Set all active sessions to \(startStr) till \(endStr).")
+                    speak(text: "All active sessions have been set to \(timePhrase), Nik.")
                     return true
                 } else {
                     addLog("[ERR] No target session active for time mutation.")
@@ -591,6 +614,15 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
         }
         
+        // Resolve pronouns ("it", "that", "them", "those", "these") to the last active sessions
+        let hasPronoun = lower.contains(" it") || lower.contains("that") || lower.contains("them") || lower.contains("those") || lower.contains("these") || lower.contains("this")
+        if dates.isEmpty && hasPronoun {
+            dates = lastSelectedDates
+            if !dates.isEmpty {
+                addLog("[NLP] Pronoun resolved to: \(dates.map { formatDateShort($0) }.joined(separator: ", "))")
+            }
+        }
+        
         var uniqueDates: [Date] = []
         for d in dates {
             let start = Calendar.current.startOfDay(for: d)
@@ -599,8 +631,38 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
         }
         
+        // Save to conversational memory or predict missing target contexts
         if !uniqueDates.isEmpty {
-            if lower.contains("remove") || lower.contains("delete") || lower.contains("deselect") {
+            lastSelectedDates = uniqueDates
+        } else if uniqueDates.isEmpty {
+            if lower.contains("remove") || lower.contains("delete") || lower.contains("deselect") || lower.contains("clear") {
+                uniqueDates = lastSelectedDates
+            } else if parseTimeRange(from: command) != nil {
+                if !lastSelectedDates.isEmpty {
+                    uniqueDates = lastSelectedDates
+                } else if let hovered = hoveredDate {
+                    uniqueDates = [Calendar.current.startOfDay(for: hovered)]
+                } else if let vm = viewModel, !vm.sessions.isEmpty {
+                    uniqueDates = vm.sessions.map { Calendar.current.startOfDay(for: $0.date) }
+                } else {
+                    uniqueDates = [Calendar.current.startOfDay(for: Date())]
+                }
+            } else if lower.contains("select") || lower.contains("add") || lower.contains("mark") || lower.contains("toggle") {
+                if let hovered = hoveredDate {
+                    uniqueDates = [Calendar.current.startOfDay(for: hovered)]
+                } else {
+                    uniqueDates = [Calendar.current.startOfDay(for: Date())]
+                }
+            }
+            
+            if !uniqueDates.isEmpty {
+                lastSelectedDates = uniqueDates
+                addLog("[NLP] Predicted target: \(uniqueDates.map { formatDateShort($0) }.joined(separator: ", "))")
+            }
+        }
+        
+        if !uniqueDates.isEmpty {
+            if lower.contains("remove") || lower.contains("delete") || lower.contains("deselect") || lower.contains("clear") {
                 return .removeDate(dates: uniqueDates)
             }
             
@@ -1105,6 +1167,56 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             self.resetTimers()
             self.startSilenceTimer(seconds: 4.0)
         }
+    }
+    
+    // ── Conversational & Voice confirmation helpers ──
+    
+    private func formatDateNatural(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let df = DateFormatter()
+        if calendar.isDateInToday(date) {
+            return "today"
+        } else if calendar.isDateInTomorrow(date) {
+            return "tomorrow"
+        } else if calendar.isDateInYesterday(date) {
+            return "yesterday"
+        } else {
+            df.dateFormat = "MMMM"
+            let monthName = df.string(from: date)
+            let day = calendar.component(.day, from: date)
+            let suffix: String
+            switch day {
+            case 1, 21, 31: suffix = "st"
+            case 2, 22: suffix = "nd"
+            case 3, 23: suffix = "rd"
+            default: suffix = "th"
+            }
+            return "the \(day)\(suffix) of \(monthName)"
+        }
+    }
+    
+    private func formatMonthNatural(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.dateFormat = "MMMM"
+        return df.string(from: date)
+    }
+    
+    private func formatTimeRangeNatural(start: Int, end: Int) -> String {
+        let startHour = start / 60
+        let startMin = start % 60
+        let endHour = end / 60
+        let endMin = end % 60
+        
+        let startPeriod = startHour >= 12 ? "PM" : "AM"
+        let startHourNormalized = startHour > 12 ? startHour - 12 : (startHour == 0 ? 12 : startHour)
+        
+        let endPeriod = endHour >= 12 ? "PM" : "AM"
+        let endHourNormalized = endHour > 12 ? endHour - 12 : (endHour == 0 ? 12 : endHour)
+        
+        let startStr = startMin == 0 ? "\(startHourNormalized) \(startPeriod)" : "\(startHourNormalized) \(startMin) \(startPeriod)"
+        let endStr = endMin == 0 ? "\(endHourNormalized) \(endPeriod)" : "\(endHourNormalized) \(endMin) \(endPeriod)"
+        
+        return "\(startStr) to \(endStr)"
     }
 }
 
