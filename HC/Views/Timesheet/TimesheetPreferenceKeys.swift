@@ -8,7 +8,7 @@
 //  ║  SwiftUI PreferenceKeys that bubble geometry frames up the    ║
 //  ║  view hierarchy. Consumed by TrackerHomeView to enable the    ║
 //  ║  gesture system to hit-test clicks and hover effects against  ║
-//  ║  calendar cells, COPY button, time sliders, and any other    ║
+//  ║  calendar cells, COPY button, time sliders, and any other     ║
 //  ║  tappable UI elements.                                        ║
 //  ╚═══════════════════════════════════════════════════════════════╝
 //

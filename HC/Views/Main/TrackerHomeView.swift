@@ -29,6 +29,9 @@ struct TrackerHomeView: View {
     /// The shared ViewModel ("Brain") driving all app state.
     @State private var vm = TrackerViewModel()
 
+    /// Continuous AI Voice Assistant processing neural speech matrix.
+    @StateObject private var voiceManager = VoiceCommandManager()
+
     /// Front-camera gesture engine for hand tracking.
     @State private var gesture = HandGestureManager()
 
@@ -81,6 +84,9 @@ struct TrackerHomeView: View {
 
     /// Index to programmatically scroll the timesheet list to.
     @State private var scrollTargetIndex: Int? = nil
+
+    /// Task to debounce / coalesce terminal re-renders across frame updates
+    @State private var renderTask: Task<Void, Never>? = nil
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -127,24 +133,61 @@ struct TrackerHomeView: View {
             }
             .onAppear {
                 boot()
+                voiceManager.setup(viewModel: vm)
+                voiceManager.onActivateCamera = {
+                    if !cameraActive {
+                        cameraActive = true
+                        gesture.startSession()
+                    }
+                }
                 // Camera starts disabled by default. User must toggle it ON to start hand gestures.
                 withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
                     dragonPulse = 1.0
                 }
             }
             .onDisappear { gesture.stopSession() }
-            .onChange(of: vm.sessions) { _, _ in render() }
+            .onChange(of: vm.sessions) { _, _ in queueRender() }
+            .onChange(of: gestureHoveredDate) { _, newDate in
+                voiceManager.hoveredDate = newDate
+            }
+            .onChange(of: voiceManager.liveTranscript) { _, _ in queueRender() }
+            .onChange(of: voiceManager.systemStatus) { _, _ in queueRender() }
+            .onChange(of: voiceManager.voiceLogs) { _, _ in queueRender() }
             // ── Gesture: Card flip ──
             .onChange(of: gesture.shouldSwitchView) { _, new in
                 if new {
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { flipped.toggle() }
                 }
             }
-            // ── Collect preference frames ──
-            .onPreferenceChange(CopyButtonFrameKey.self) { copyButtonFrame = $0 }
-            .onPreferenceChange(CalendarGridFrameKey.self) { calendarGridFrame = $0 }
-            .onPreferenceChange(SliderFramesKey.self) { sliderFrames = $0 }
-            .onPreferenceChange(TappableFramesKey.self) { tappableFrames = $0 }
+            // ── Collect preference frames asynchronously to prevent layout loops ──
+            .onPreferenceChange(CopyButtonFrameKey.self) { newFrame in
+                if copyButtonFrame != newFrame {
+                    DispatchQueue.main.async {
+                        self.copyButtonFrame = newFrame
+                    }
+                }
+            }
+            .onPreferenceChange(CalendarGridFrameKey.self) { newFrame in
+                if calendarGridFrame != newFrame {
+                    DispatchQueue.main.async {
+                        self.calendarGridFrame = newFrame
+                    }
+                }
+            }
+            .onPreferenceChange(SliderFramesKey.self) { newFrames in
+                if sliderFrames != newFrames {
+                    DispatchQueue.main.async {
+                        self.sliderFrames = newFrames
+                    }
+                }
+            }
+            .onPreferenceChange(TappableFramesKey.self) { newFrames in
+                if tappableFrames != newFrames {
+                    DispatchQueue.main.async {
+                        self.tappableFrames = newFrames
+                    }
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -394,6 +437,18 @@ struct TrackerHomeView: View {
     // MARK: - Terminal Renderer
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    private func queueRender() {
+        renderTask?.cancel()
+        renderTask = Task { @MainActor in
+            do {
+                // Coalesce updates by sleeping for 30ms (30,000,000 ns)
+                try await Task.sleep(nanoseconds: 30_000_000)
+                guard !Task.isCancelled else { return }
+                render()
+            } catch {}
+        }
+    }
+
     private func render() {
         var l: [TLine] = []; var n = 1
         let dragon: [String] = [
@@ -468,6 +523,18 @@ struct TrackerHomeView: View {
         for mod in ["Calendar engine", "Haptic subsystem", "Clipboard bridge", "Pencil input", "Glitch renderer"] {
             let pad = String(repeating: ".", count: 30 - mod.count)
             l.append(TLine(n: n, t: "  [SYS] \(mod) \(pad) [OK]", c: Forge.jade.opacity(0.35), ln: true)); n += 1
+        }
+        l.append(TLine(n: n, t: "", c: .clear, ln: false)); n += 1
+
+        l.append(TLine(n: n, t: "  [SYS] Voice Assistant: \(voiceManager.systemStatus)", c: voiceManager.systemStatus == "ACTIVE" ? Forge.ember : Forge.steel.opacity(0.35), ln: true)); n += 1
+        if !voiceManager.liveTranscript.isEmpty {
+            l.append(TLine(n: n, t: "  [SYS] Transcript: \"\(voiceManager.liveTranscript)\"", c: Forge.supernova.opacity(0.85), ln: true)); n += 1
+        }
+        for log in voiceManager.voiceLogs {
+            let color = log.contains("[OK]") ? Forge.jade
+                      : log.contains("[ERR]") ? Forge.crimson
+                      : Forge.steel.opacity(0.4)
+            l.append(TLine(n: n, t: "  \(log)", c: color, ln: true)); n += 1
         }
         l.append(TLine(n: n, t: "", c: .clear, ln: false)); n += 1
 
@@ -553,7 +620,7 @@ struct TrackerHomeView: View {
     private func boot() {
         Timer.scheduledTimer(withTimeInterval: 0.45, repeats: true) { _ in blink.toggle() }
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in uptime += 1 }
-        render()
+        queueRender()
     }
 
     private func fmtUp() -> String { String(format: "%02d:%02d", uptime / 60, uptime % 60) }

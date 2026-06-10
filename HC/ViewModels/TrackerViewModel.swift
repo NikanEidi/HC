@@ -152,6 +152,19 @@ class TrackerViewModel {
         )
     }
 
+    /// Updates the start and end times for a session on a specific date.
+    /// Used by the NLP Voice Assistant to perform precise time mutations.
+    func updateSessionTimes(for date: Date, startMinutes: Int, endMinutes: Int) {
+        let dayStart = calendar.startOfDay(for: date)
+        if let idx = sessions.firstIndex(where: { calendar.startOfDay(for: $0.date) == dayStart }) {
+            if let start = calendar.date(bySettingHour: startMinutes / 60, minute: startMinutes % 60, second: 0, of: dayStart),
+               let end = calendar.date(bySettingHour: endMinutes / 60, minute: endMinutes % 60, second: 0, of: dayStart) {
+                sessions[idx].startTime = start
+                sessions[idx].endTime = end
+            }
+        }
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // MARK: - Calendar Navigation
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
