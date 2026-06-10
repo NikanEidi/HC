@@ -399,11 +399,57 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 greetDelayTask?.cancel()
                 greetDelayTask = nil
                 
+                // Determine if there is a command spoken in the same breath
+                // Extract everything after the wake word range
+                let commandStartIndex = wakeRange.upperBound
+                let remainingText = String(lowerText[commandStartIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                
                 // Immediately stop local recognition request to save battery
                 cancelCurrentRecognitionSession()
                 
-                // Trigger wake vocal response. Upon completion, AVSpeechSynthesizerDelegate didFinish triggers recordCommandPayload()
-                self.speak(text: "Optical matrix online. You have the conn, Nik.")
+                if !remainingText.isEmpty && containsCommandKeywords(remainingText) {
+                    // One-breath command execution!
+                    addLog("[AI] One-breath command detected: \"\(remainingText)\"")
+                    processOneBreathCommand(remainingText)
+                } else {
+                    // Regular wake word trigger
+                    // Trigger wake vocal response. Upon completion, AVSpeechSynthesizerDelegate didFinish triggers recordCommandPayload()
+                    self.speak(text: "Optical matrix online. You have the conn, Nik.")
+                }
+            }
+        }
+    }
+    
+    private func processOneBreathCommand(_ transcript: String) {
+        self.systemStatus = "PROCESSING"
+        
+        Task {
+            do {
+                // Parse Intent with GPT-4o-mini using the local transcript directly
+                let dfMonthYear = DateFormatter()
+                dfMonthYear.dateFormat = "MMMM yyyy"
+                let currentMonthName = dfMonthYear.string(from: viewModel?.currentMonth ?? Date())
+                
+                let df = DateFormatter()
+                df.dateFormat = "yyyy-MM-dd"
+                let todayStr = df.string(from: Date())
+                
+                let aiResponse = try await AIBrainManager.shared.parseIntent(
+                    transcript: transcript,
+                    currentMonthName: currentMonthName,
+                    todayDate: todayStr
+                )
+                
+                await MainActor.run {
+                    self.addLog("[AI] JSON Decoded -> Executing Ghost-Clicks... [OK]")
+                    self.executeAIIntent(aiResponse)
+                }
+            } catch {
+                await MainActor.run {
+                    self.addLog("[ERR] AI Brain failed: \(error.localizedDescription)")
+                    self.speakFallbackError()
+                    self.deactivateSession()
+                }
             }
         }
     }
@@ -417,45 +463,37 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             "hay vision", "he vision", "heavy vision", "hi-vision", "hey-vision",
             "hey listen", "hi listen", "hey prison", "hi prison", "open eyes", "open your eyes",
             "hi vijin", "hey vijin", "hi vigen", "hey vigen", "hi vidjin", "hey vidjin",
-            "hi virgin", "hey virgin", "hi beacon", "hey beacon"
+            "hi virgin", "hey virgin", "hi beacon", "hey beacon",
+            "vision vision", "vixen vixen", "vijin vijin",
+            "hey", "hay", "hi"
         ]
         
         let words = lowerText.split(separator: " ").map(String.init)
         if words.isEmpty { return nil }
         
-        // We try to match prefixes of 1, 2, or 3 words
-        for count in (1...min(3, words.count)).reversed() {
-            let prefix = words[0..<count].joined(separator: " ")
-            for candidate in candidates {
-                let sim = normalizedSimilarity(a: prefix, b: candidate)
-                if sim >= 0.72 {
-                    var wordIdx = 0
-                    var currentIdx = text.startIndex
-                    while currentIdx < text.endIndex && wordIdx < count {
-                        while currentIdx < text.endIndex && (text[currentIdx].isWhitespace || text[currentIdx].isPunctuation) {
-                            currentIdx = text.index(after: currentIdx)
-                        }
-                        if currentIdx >= text.endIndex { break }
-                        while currentIdx < text.endIndex && !text[currentIdx].isWhitespace && !text[currentIdx].isPunctuation {
-                            currentIdx = text.index(after: currentIdx)
-                        }
-                        wordIdx += 1
-                    }
-                    return text.startIndex..<currentIdx
-                }
-            }
-        }
+        let cleanedWords = words.map { $0.filter { !$0.isPunctuation } }
         
-        // Fallback: check for single word "vision" or "visual"
-        for singleTarget in ["vision", "visual"] {
-            if let range = lowerText.range(of: singleTarget) {
-                let startIdx = range.lowerBound
-                if startIdx == lowerText.startIndex {
-                    return range
-                } else {
-                    let prevCharIdx = lowerText.index(before: startIdx)
-                    if lowerText[prevCharIdx].isWhitespace || lowerText[prevCharIdx].isPunctuation {
-                        return range
+        // Slide a window of size 1 to 3 across the entire words array
+        for i in 0..<words.count {
+            for count in 1...3 {
+                guard i + count <= words.count else { continue }
+                
+                let phrase = cleanedWords[i..<(i + count)].joined(separator: " ")
+                let originalPhrase = words[i..<(i + count)].joined(separator: " ")
+                
+                for candidate in candidates {
+                    let cleanPhrase = phrase.filter { !$0.isWhitespace }
+                    let cleanCandidate = candidate.filter { !$0.isPunctuation && !$0.isWhitespace }
+                    
+                    let sim = normalizedSimilarity(a: cleanPhrase, b: cleanCandidate)
+                    
+                    // short candidates (like "hey", "hi", "hay") require high similarity to avoid false positives
+                    let threshold: Double = (candidate.count <= 3) ? 0.95 : 0.80
+                    
+                    if sim >= threshold {
+                        if let range = lowerText.range(of: originalPhrase) {
+                            return range
+                        }
                     }
                 }
             }
@@ -1626,7 +1664,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 }
                 
                 // 2. Parse Intent with GPT-4o-mini
-                let currentMonthName = formatMonthNatural(viewModel?.currentMonth ?? Date())
+                let dfMonthYear = DateFormatter()
+                dfMonthYear.dateFormat = "MMMM yyyy"
+                let currentMonthName = dfMonthYear.string(from: viewModel?.currentMonth ?? Date())
                 
                 let df = DateFormatter()
                 df.dateFormat = "yyyy-MM-dd"
@@ -1697,7 +1737,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                     checkAndNavigateMonth(for: d)
                     triggerRigidHaptic()
                     withAnimation {
-                        vm.toggleDate(d)
+                        if !vm.isSelected(d) {
+                            vm.toggleDate(d)
+                        }
                     }
                 }
                 let dateStr = parsedDates.map { formatDateShort($0) }.joined(separator: ", ")
