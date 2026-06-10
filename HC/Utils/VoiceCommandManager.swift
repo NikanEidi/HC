@@ -51,7 +51,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private var viewModel: TrackerViewModel?
     
     // ── Speech Pipeline State ──
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine: AVAudioEngine? = nil
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -136,13 +136,23 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 return
             }
             
-            // Ensure audio engine is stopped before configuring
-            if self.audioEngine.isRunning {
-                self.audioEngine.stop()
+            if self.audioEngine == nil {
+                self.audioEngine = AVAudioEngine()
             }
+            guard let engine = self.audioEngine else { return }
             
-            let inputNode = self.audioEngine.inputNode
+            // Stop and reset to completely clear any bad CoreAudio connection graphs
+            engine.stop()
+            engine.reset()
+            
+            let inputNode = engine.inputNode
             let recordingFormat = inputNode.outputFormat(forBus: 0)
+            
+            // Guard format to avoid installing a tap with 0 channels
+            guard recordingFormat.channelCount > 0, recordingFormat.sampleRate > 0 else {
+                self.addLog("[ERR] Audio hardware format has 0 channels.")
+                return
+            }
             
             inputNode.removeTap(onBus: 0)
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
@@ -157,9 +167,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 self?.requestHolder.request?.append(buffer)
             }
             
-            self.audioEngine.prepare()
+            engine.prepare()
             do {
-                try self.audioEngine.start()
+                try engine.start()
                 self.isListening = true
                 self.systemStatus = "STANDBY"
                 self.addLog("[SYS] Voice Engine: Passive listening online.")
@@ -201,7 +211,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                     if nsError.code != 301 && nsError.code != 203 {
                         self.addLog("[ERR] Speech recognizer error: \(error.localizedDescription)")
                     }
-                    if !self.audioEngine.isRunning {
+                    if let engine = self.audioEngine, !engine.isRunning {
                         self.startListening()
                     }
                 }
