@@ -244,15 +244,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
         }
         
-        // 6. Only assign to requestHolder if task creation succeeded
-        if task != nil {
-            self.recognitionTask = task
-            self.requestHolder.request = newRequest
-        } else {
-            addLog("[ERR] Failed to initialize speech recognition task.")
-            newRequest.endAudio()
-            self.recognitionRequest = nil
-        }
+        // 6. Store task and enable the audio tap to write to the request
+        self.recognitionTask = task
+        self.requestHolder.request = newRequest
     }
     
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1230,8 +1224,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // MARK: - AVSpeechSynthesizerDelegate
     
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        let utteranceID = ObjectIdentifier(utterance)
         Task { @MainActor in
-            guard utterance === self.activeUtterance else { return }
+            guard let active = self.activeUtterance, ObjectIdentifier(active) == utteranceID else { return }
             self.isSynthesizerSpeaking = false
             self.activeUtterance = nil
             self.startNewRecognitionSession()
@@ -1241,8 +1236,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
     
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        let utteranceID = ObjectIdentifier(utterance)
         Task { @MainActor in
-            guard utterance === self.activeUtterance else { return }
+            guard let active = self.activeUtterance, ObjectIdentifier(active) == utteranceID else { return }
             self.isSynthesizerSpeaking = false
             self.activeUtterance = nil
             self.startNewRecognitionSession()
