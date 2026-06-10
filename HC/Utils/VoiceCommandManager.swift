@@ -90,28 +90,32 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
     private func requestPermissions() {
-        SFSpeechRecognizer.requestAuthorization { authStatus in
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                switch authStatus {
-                case .authorized:
-                    self.addLog("[SYS] Speech Recognition Matrix authorized.")
-                    self.startListening()
-                case .denied, .restricted, .notDetermined:
-                    self.addLog("[SYS] Speech Recognition access denied/restricted.")
-                @unknown default:
-                    break
-                }
-            }
-        }
-        
-        AVAudioApplication.requestRecordPermission { granted in
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                if granted {
-                    self.addLog("[SYS] Audio input sensor enabled.")
-                } else {
-                    self.addLog("[SYS] Audio input sensor access denied.")
+        SFSpeechRecognizer.requestAuthorization { speechStatus in
+            AVAudioApplication.requestRecordPermission { micGranted in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    
+                    // Log Speech Recognition status
+                    switch speechStatus {
+                    case .authorized:
+                        self.addLog("[SYS] Speech Recognition Matrix authorized.")
+                    case .denied, .restricted, .notDetermined:
+                        self.addLog("[SYS] Speech Recognition access denied/restricted.")
+                    @unknown default:
+                        break
+                    }
+                    
+                    // Log Microphone status
+                    if micGranted {
+                        self.addLog("[SYS] Audio input sensor enabled.")
+                    } else {
+                        self.addLog("[SYS] Audio input sensor access denied.")
+                    }
+                    
+                    // Only start listening if both authorizations are granted
+                    if speechStatus == .authorized && micGranted {
+                        self.startListening()
+                    }
                 }
             }
         }
