@@ -571,6 +571,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         let parsedDates = parseDates(from: command)
         dates.append(contentsOf: parsedDates)
         
+        let patternDates = parseWeekdayPatterns(from: command)
+        dates.append(contentsOf: patternDates)
+        
         if dates.isEmpty {
             let baseDate = viewModel?.currentMonth ?? Date()
             let currentYear = Calendar.current.component(.year, from: baseDate)
@@ -790,11 +793,45 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
     
     private func parseTimeRange(from text: String) -> (start: Int, end: Int)? {
+        let preprocessed = preprocessTimeWords(text)
+        let nsString = preprocessed as NSString
+        
+        // 1. Duration range pattern: e.g. "log 8 hours starting at 9 AM" or "for 6.5 hours starting at 10:30"
+        let durationPattern = "\\b(?:for|log|track)?\\s*(\\d+(?:\\.\\d+)?)\\s*hours?\\s*(?:starting|beginning|at)?\\s*(?:at)?\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\b"
+        if let durRegex = try? NSRegularExpression(pattern: durationPattern, options: [.caseInsensitive]) {
+            if let match = durRegex.firstMatch(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length)) {
+                let durationStr = nsString.substring(with: match.range(at: 1))
+                let startHourStr = nsString.substring(with: match.range(at: 2))
+                let startMinStr = match.range(at: 3).location != NSNotFound ? nsString.substring(with: match.range(at: 3)) : nil
+                let startAMPM = match.range(at: 4).location != NSNotFound ? nsString.substring(with: match.range(at: 4)) : nil
+                
+                if let duration = Double(durationStr), var startHour = Int(startHourStr) {
+                    let startMin = Int(startMinStr ?? "") ?? 0
+                    
+                    if let ampm = startAMPM?.lowercased() {
+                        if ampm == "pm" && startHour < 12 { startHour += 12 }
+                        if ampm == "am" && startHour == 12 { startHour = 0 }
+                    } else {
+                        if startHour < 7 { startHour += 12 }
+                    }
+                    
+                    let startMinutes = startHour * 60 + startMin
+                    let endMinutes = startMinutes + Int(duration * 60)
+                    return (startMinutes, min(endMinutes, 1440))
+                }
+            }
+        }
+        
+        // 2. Standard shift keyword match
+        if preprocessed.contains("standard shift") || preprocessed.contains("standard day") || preprocessed.contains("full day") {
+            return (9 * 60, 17 * 60) // 9:00 AM to 5:00 PM (8 hours)
+        }
+        
+        // 3. Range pattern: e.g. "9 to 5", "9:30 - 17:00", "9am to 6pm"
         let pattern = "\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s*(?:to|till|until|-)\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\b"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
-        let nsString = text as NSString
         
-        if let match = regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: nsString.length)) {
+        if let match = regex.firstMatch(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length)) {
             let startHourStr = nsString.substring(with: match.range(at: 1))
             let startMinStr = match.range(at: 2).location != NSNotFound ? nsString.substring(with: match.range(at: 2)) : nil
             let startAMPM = match.range(at: 3).location != NSNotFound ? nsString.substring(with: match.range(at: 3)) : nil
@@ -829,15 +866,15 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             return (startHour * 60 + startMin, endHour * 60 + endMin)
         }
         
+        // 4. Single time fallback: e.g. "9:30" (defaults to a standard 9-hour offset)
         let singleTimePattern = "\\b(\\d{1,2}):(\\d{2})\\b"
         if let singleRegex = try? NSRegularExpression(pattern: singleTimePattern, options: []) {
-            let matches = singleRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+            let matches = singleRegex.matches(in: preprocessed, options: [], range: NSRange(location: 0, length: nsString.length))
             if matches.count == 1 {
                 let m = matches[0]
                 if let hour = Int(nsString.substring(with: m.range(at: 1))),
                    let min = Int(nsString.substring(with: m.range(at: 2))) {
-                    let lowerText = text.lowercased()
-                    if lowerText.contains("till") || lowerText.contains("to") {
+                    if preprocessed.contains("till") || preprocessed.contains("to") {
                         return (7 * 60, hour * 60 + min)
                     } else {
                         return (hour * 60 + min, (hour + 9) * 60 + min)
@@ -855,6 +892,115 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         if let idx = longMonths.firstIndex(of: monthStr) { return idx + 1 }
         if let idx = months.firstIndex(of: monthStr) { return idx + 1 }
         return nil
+    }
+    
+    private func parseWeekdayPatterns(from text: String) -> [Date] {
+        let lower = text.lowercased()
+        let calendar = Calendar.current
+        let baseDate = viewModel?.currentMonth ?? Date()
+        
+        // Find all days in the currently displayed month
+        guard let monthRange = calendar.range(of: .day, in: .month, for: baseDate),
+              let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: baseDate)) else {
+            return []
+        }
+        
+        var datesInMonth: [Date] = []
+        for day in 1...monthRange.count {
+            if let date = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth) {
+                datesInMonth.append(calendar.startOfDay(for: date))
+            }
+        }
+        
+        // 1. "weekdays" (Mondays through Fridays)
+        if lower.contains("weekday") {
+            return datesInMonth.filter { date in
+                let wd = calendar.component(.weekday, from: date)
+                return wd >= 2 && wd <= 6
+            }
+        }
+        
+        // 2. "weekends" (Saturdays and Sundays)
+        if lower.contains("weekend") {
+            return datesInMonth.filter { date in
+                let wd = calendar.component(.weekday, from: date)
+                return wd == 1 || wd == 7
+            }
+        }
+        
+        // 3. "all days" or "entire month" or "every day"
+        if lower.contains("all days") || lower.contains("entire month") || lower.contains("every day") || lower.contains("all of") {
+            return datesInMonth
+        }
+        
+        // 4. Match specific weekdays (e.g. "Mondays", "Mondays and Wednesdays", "Tuesdays")
+        let weekdayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+        var selectedWeekdays: [Int] = []
+        
+        for (index, name) in weekdayNames.enumerated() {
+            if lower.contains(name) || lower.contains("\(name)s") {
+                selectedWeekdays.append(index + 1)
+            }
+            
+            let short = String(name.prefix(3))
+            if short != "thu" && short != "sat" {
+                let pattern = "\\b\(short)s?\\b"
+                if let regex = try? NSRegularExpression(pattern: pattern),
+                   regex.firstMatch(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower)) != nil {
+                    selectedWeekdays.append(index + 1)
+                }
+            } else {
+                let pattern = "\\b\(short)s?\\b|\\bthurs?\\b"
+                if let regex = try? NSRegularExpression(pattern: pattern),
+                   regex.firstMatch(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower)) != nil {
+                    selectedWeekdays.append(index + 1)
+                }
+            }
+        }
+        
+        if !selectedWeekdays.isEmpty {
+            return datesInMonth.filter { date in
+                let wd = calendar.component(.weekday, from: date)
+                return selectedWeekdays.contains(wd)
+            }
+        }
+        
+        return []
+    }
+    
+    private func preprocessTimeWords(_ text: String) -> String {
+        var lower = text.lowercased()
+        
+        // Common phrases
+        lower = lower.replacingOccurrences(of: "nine thirty", with: "9:30")
+        lower = lower.replacingOccurrences(of: "eight thirty", with: "8:30")
+        lower = lower.replacingOccurrences(of: "seven thirty", with: "7:30")
+        lower = lower.replacingOccurrences(of: "half past nine", with: "9:30")
+        lower = lower.replacingOccurrences(of: "half past eight", with: "8:30")
+        lower = lower.replacingOccurrences(of: "half past seven", with: "7:30")
+        lower = lower.replacingOccurrences(of: "noon", with: "12")
+        
+        // Single digits
+        let wordNumbers = [
+            ("one", "1"), ("two", "2"), ("three", "3"), ("four", "4"),
+            ("five", "5"), ("six", "6"), ("seven", "7"), ("eight", "8"),
+            ("nine", "9"), ("ten", "10"), ("eleven", "11"), ("twelve", "12")
+        ]
+        
+        for (word, num) in wordNumbers {
+            let pattern = "\\b\(word)\\b"
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                lower = regex.stringByReplacingMatches(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower), withTemplate: num)
+            }
+        }
+        
+        // Convert dot time separator (e.g. 9.30) to colon (9:30)
+        let dotPattern = "\\b(\\d{1,2})\\.(\\d{2})\\b"
+        if let regex = try? NSRegularExpression(pattern: dotPattern) {
+            lower = regex.stringByReplacingMatches(in: lower, options: [], range: NSRange(lower.startIndex..., in: lower), withTemplate: "$1:$2")
+        }
+        
+        return lower
     }
     
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
