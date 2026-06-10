@@ -140,6 +140,11 @@ struct TrackerHomeView: View {
                         gesture.startSession()
                     }
                 }
+                voiceManager.onSwitchView = { showTimesheet in
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                        flipped = showTimesheet
+                    }
+                }
                 // Camera starts disabled by default. User must toggle it ON to start hand gestures.
                 withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
                     dragonPulse = 1.0

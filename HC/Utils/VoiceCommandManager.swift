@@ -30,6 +30,7 @@ enum CommandIntent {
     case navigateMonth(targetMonth: Date)
     case activateCamera
     case copyReport
+    case switchView(showTimesheet: Bool)
     case unknown(command: String)
 }
 
@@ -46,6 +47,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // ── External Context & Callbacks ──
     var hoveredDate: Date? = nil
     var onActivateCamera: (() -> Void)?
+    var onSwitchView: ((Bool) -> Void)?
     private var viewModel: TrackerViewModel?
     
     // ── Speech Pipeline State ──
@@ -405,6 +407,18 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 return false
             }
             
+        case .switchView(let showTimesheet):
+            triggerRigidHaptic()
+            if showTimesheet {
+                addLog("[SYS] UI Matrix: Switching to Timesheet View.")
+                speak(text: "Switching to timesheet panel, Nik.")
+            } else {
+                addLog("[SYS] UI Matrix: Switching to Calendar View.")
+                speak(text: "Switching to calendar panel, Nik.")
+            }
+            onSwitchView?(showTimesheet)
+            return true
+            
         case .navigateMonth(let targetMonth):
             triggerRigidHaptic()
             let df = DateFormatter()
@@ -555,6 +569,18 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     
     private func extractIntent(from command: String) -> CommandIntent {
         let lower = command.lowercased()
+        
+        // 0. Switch UI views
+        if lower.contains("timesheet") || lower.contains("time sheet") || lower.contains("table") {
+            if lower.contains("switch") || lower.contains("show") || lower.contains("go to") || lower.contains("view") || lower.contains("display") || lower.contains("open") {
+                return .switchView(showTimesheet: true)
+            }
+        }
+        if lower.contains("calendar") || lower.contains("calander") || lower.contains("grid") {
+            if lower.contains("switch") || lower.contains("show") || lower.contains("go to") || lower.contains("view") || lower.contains("display") || lower.contains("open") {
+                return .switchView(showTimesheet: false)
+            }
+        }
         
         // 1. Camera activation
         if lower.contains("open your eyes") || lower.contains("open eyes") {
