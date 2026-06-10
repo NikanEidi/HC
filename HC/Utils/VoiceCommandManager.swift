@@ -70,6 +70,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // ── Speech Synthesis Pipeline ──
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var isSynthesizerSpeaking = false
+    private var activeUtterance: AVSpeechUtterance?
     private let requestHolder = SpeechRequestHolder()
     
     override init() {
@@ -121,7 +122,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
     func startListening() {
-        guard !isListening else { return }
+        if let engine = audioEngine, engine.isRunning {
+            return
+        }
         
         // Dispatch to the main thread runloop to run audio setup synchronously,
         // avoiding unsafeForcedSync warnings inside the cooperative thread pool.
@@ -180,23 +183,40 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
     }
     
-    private func startNewRecognitionSession() {
+    private func cancelCurrentRecognitionSession() {
         requestHolder.request = nil
+        
+        recognitionRequest?.endAudio()
+        recognitionRequest = nil
         
         recognitionTask?.cancel()
         recognitionTask = nil
+    }
+    
+    private func startNewRecognitionSession() {
+        // 1. Clear any active request to stop the tap thread appending to it
+        requestHolder.request = nil
         
-        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        requestHolder.request = recognitionRequest
-        guard let recognitionRequest = recognitionRequest else { return }
-        recognitionRequest.shouldReportPartialResults = true
+        // 2. Cancel and end any previous session cleanly
+        recognitionTask?.cancel()
+        recognitionTask = nil
         
+        recognitionRequest?.endAudio()
+        recognitionRequest = nil
+        
+        // 3. Verify hardware availability
         guard let speechRecognizer = speechRecognizer, speechRecognizer.isAvailable else {
             addLog("[ERR] Speech recognition hardware offline.")
             return
         }
         
-        recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+        // 4. Instantiate a new request object
+        let newRequest = SFSpeechAudioBufferRecognitionRequest()
+        newRequest.shouldReportPartialResults = true
+        self.recognitionRequest = newRequest
+        
+        // 5. Initialize the speech task
+        let task = speechRecognizer.recognitionTask(with: newRequest) { [weak self] result, error in
             guard let self = self else { return }
             
             Task { @MainActor in
@@ -210,12 +230,28 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                     // Code 301/203 are user/session cancellation codes, safe to ignore
                     if nsError.code != 301 && nsError.code != 203 {
                         self.addLog("[ERR] Speech recognizer error: \(error.localizedDescription)")
+                        
+                        // Stop buffer appending to this specific failed request
+                        if self.recognitionRequest === newRequest {
+                            self.requestHolder.request = nil
+                            self.recognitionRequest?.endAudio()
+                        }
                     }
                     if let engine = self.audioEngine, !engine.isRunning {
                         self.startListening()
                     }
                 }
             }
+        }
+        
+        // 6. Only assign to requestHolder if task creation succeeded
+        if task != nil {
+            self.recognitionTask = task
+            self.requestHolder.request = newRequest
+        } else {
+            addLog("[ERR] Failed to initialize speech recognition task.")
+            newRequest.endAudio()
+            self.recognitionRequest = nil
         }
     }
     
@@ -1162,6 +1198,11 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     func speak(text: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            
+            // Cleanly cancel the active recognition session to release resources
+            // and avoid echo transcribing during speech synthesis.
+            self.cancelCurrentRecognitionSession()
+            
             let utterance = AVSpeechUtterance(string: text)
             
             // Strictly filter for a Premium MALE English voice (en-US or en-GB)
@@ -1180,6 +1221,7 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
             
             self.isSynthesizerSpeaking = true
+            self.activeUtterance = utterance
             self.speechSynthesizer.speak(utterance)
             self.addLog("[SYS] Vision: \"\(text)\"")
         }
@@ -1189,7 +1231,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            guard utterance === self.activeUtterance else { return }
             self.isSynthesizerSpeaking = false
+            self.activeUtterance = nil
             self.startNewRecognitionSession()
             self.resetTimers()
             self.startSilenceTimer(seconds: 4.0)
@@ -1198,7 +1242,9 @@ class VoiceCommandManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            guard utterance === self.activeUtterance else { return }
             self.isSynthesizerSpeaking = false
+            self.activeUtterance = nil
             self.startNewRecognitionSession()
             self.resetTimers()
             self.startSilenceTimer(seconds: 4.0)
