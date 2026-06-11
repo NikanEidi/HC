@@ -12,43 +12,43 @@ The **Midnight Forge** design system is built around three principles:
 
 ## Color Palette
 
-### Foundations
+### Foundations (Deeper, Richer Cosmic Space Void)
 
 | Token | Hex | RGB | Usage |
 |-------|-----|-----|-------|
-| `obsidian` | `#07070E` | 7, 7, 14 | Card fills, elevated surfaces |
-| `abyss` | `#05050B` | 5, 5, 11 | Root canvas, deepest layer |
-| `phantom` | `#130E2E` | 19, 14, 46 | Deep indigo accent layer |
+| `obsidian` | `#020204` | 2, 2, 4 | Card fills, elevated surfaces |
+| `abyss` | `#010102` | 1, 1, 2 | Root canvas, deepest layer |
+| `phantom` | `#040308` | 4, 3, 8 | Deep indigo accent layer |
 
-### Primary Accents
-
-| Token | Hex | RGB | Usage |
-|-------|-----|-----|-------|
-| `arcane` | `#8B3CFC` | 139, 60, 252 | Brand primary, weekday selections |
-| `cipher` | `#06B6D4` | 6, 182, 212 | Interactive elements, totals, today |
-| `supernova` | `#A855F7` | 168, 85, 247 | Lighter purple highlights |
-
-### Signal Colors
+### Primary Accents (Ultra-Vibrant Glowing Cyberpunk)
 
 | Token | Hex | RGB | Usage |
 |-------|-----|-----|-------|
-| `ember` | `#F59E0B` | 245, 158, 11 | Weekend markers, warnings |
-| `crimson` | `#EF4444` | 239, 68, 68 | Weekend borders, destructive |
+| `arcane` | `#8426FF` | 133, 38, 255 | Electric Violet -- brand primary, weekday selections |
+| `cipher` | `#00D8F2` | 0, 217, 242 | Hyper-Neon Cyan -- interactive elements, totals, today |
+| `supernova` | `#FF26A6` | 255, 38, 166 | Vivid Neon Magenta -- highlights, dragon horns |
 
-### Terminal & Success
-
-| Token | Hex | RGB | Usage |
-|-------|-----|-----|-------|
-| `jade` | `#10B981` | 16, 185, 129 | Terminal output, success states |
-| `mint` | `#34D399` | 52, 211, 153 | Light green secondary accent |
-
-### Neutrals
+### Signal Colors (Glowing Burning Fire)
 
 | Token | Hex | RGB | Usage |
 |-------|-----|-----|-------|
-| `frost` | `#E2E8F0` | 226, 232, 240 | Primary text (cool white) |
-| `steel` | `#64748B` | 100, 116, 139 | Secondary text, labels |
-| `ash` | `#414C5E` | 65, 76, 94 | Tertiary, tick marks |
+| `ember` | `#FF7300` | 255, 115, 0 | Vivid Safety Orange -- weekend markers, warnings |
+| `crimson` | `#FF263F` | 255, 38, 63 | Glowing Crimson Red -- weekend borders, destructive |
+
+### Terminal & Success (Acid Jade/Mint)
+
+| Token | Hex | RGB | Usage |
+|-------|-----|-----|-------|
+| `jade` | `#00F273` | 0, 242, 115 | Electric Jade -- terminal output, success states |
+| `mint` | `#1AFFA6` | 26, 255, 166 | Glowing Neon Mint -- light green secondary accent |
+
+### Neutrals (Premium Metallic Steel)
+
+| Token | Hex | RGB | Usage |
+|-------|-----|-----|-------|
+| `frost` | `#F0F5FC` | 240, 245, 252 | Luminous Ice -- primary text |
+| `steel` | `#7A8AA3` | 122, 138, 163 | Chrome Steel -- secondary text, labels |
+| `ash` | `#333D4D` | 51, 61, 77 | Dark Charcoal -- tertiary, tick marks |
 
 ---
 
@@ -103,29 +103,35 @@ and colored, producing a multi-chromatic dragon with animated effects.
 
 | Character | Class | Forge Color | Effect |
 |-----------|-------|-------------|--------|
-| `#` | Body | arcane | Gradient fill |
-| `*` | Sparkle | frost / cipher | Animated pulse |
-| `~` | Flame | ember / crimson | Breathing glow |
-| `^` | Horn | supernova | Static accent |
-| `o` | Eye | crimson | Glow halo |
-| `/` `\` | Wing edge | cipher | Directional shade |
-| `(` `)` | Contour | steel | Structural |
-| `V` | Teeth/claw | frost | Bright accent |
-| `=` | Scale | jade | Pattern fill |
-| `-` | Outline | ash | Dim structural |
-| `_` | Base | phantom | Ground shadow |
-| `.` | Dot | steel (dim) | Texture detail |
-| `+` | Joint | mint | Connection point |
-| `v` | Tail | arcane (dim) | Gradient trail |
-| ` ` | Space | -- | Transparent |
+| `#` | Body scales | Cipher -> Jade -> Arcane -> Supernova -> Ember | Vertical position-based gradient |
+| `O`, `:` | Eyes (rows 5-6) | Crimson -> Supernova | Animated pulse |
+| `>`, `<` | Flame breath | Ember -> Crimson | Animated glow (0.8x pulse) |
+| `{`, `}` | Flame brackets | Supernova -> Ember | Animated pulse |
+| `*` | Sparkle particles | Mint -> Cipher | Animated pulse |
+| `=` | Wing membrane (rows 7-11) / Ridges | Cipher -> Arcane / Supernova | Animated shimmer (0.6x) |
+| `~` | Crown (rows 0-2) / Ridges | Supernova / Arcane -> Cipher | Animated (0.5x pulse) |
+| `^` | Wing tips (rows 0-4) / Other | Jade / Jade -> Mint | Animated (0.6x pulse) |
+| `/`, `\` | Wing edges | Arcane | 70% opacity |
+| `(`, `)` | Structural curves | Cipher | 75% opacity |
+| `V` | Talons (row >= 23) / Wing core (rows 6-7) | Supernova / Ember -> Supernova | Static / Animated |
+| `v` | Tail feathers (row >= 23) | Steel -> Supernova | 40% blend |
+| `Y` | Tail tip | Supernova | Static |
+| `-`, `_` | Border strokes | Steel | 45% opacity |
+| `.`, `,` | Dots | Mint | 50% opacity |
+| `` ` `` | Feathers | Steel | 35% opacity |
+| `\|` | Pipe separators | Steel | 50% opacity |
+| `'` | Apostrophe | Cipher | 40% opacity |
+| ` ` | Space | Steel | 8% opacity |
 
 ### Animated Effects
-- **Flame breath**: Characters classified as `~` pulse between ember and
-  crimson with an opacity cycle driven by the animation phase parameter
-- **Sparkle particles**: Characters classified as `*` have randomized
-  phase offsets creating a twinkling effect across the dragon body
-- **Phase parameter**: A single `CGFloat` phase value (0 to 1) drives
-  all animated character effects with per-class timing offsets
+- **Flame breath**: `>`, `<` pulse between Ember and Crimson driven by `pulse * 0.8`
+- **Eyes**: `O`, `:` on rows 5-6 interpolate between Crimson and Supernova
+- **Sparkle particles**: `*` characters interpolate between Mint and Cipher
+- **Wing membrane shimmer**: `=` on rows 7-11 interpolates Cipher -> Arcane at `pulse * 0.6`
+- **Body gradient**: `#` uses row position ratio to create a full-body
+  vertical gradient from cool (Cipher/Jade) at the top to warm (Supernova/Ember) at the bottom
+- **Phase parameter**: A single `CGFloat` pulse value (0 to 1) with
+  `easeInOut` 2.8s cycle drives all animated effects with per-class timing multipliers
 
 ---
 

@@ -26,7 +26,7 @@ The interface is split into two panels:
 - **Right**: A live ANSI-styled terminal with ultra-detailed ASCII dragon header,
   system boot sequence, voice assistant status, and real-time session data.
 
-**v4.0** introduces a **voice command engine** -- a continuous speech
+The app features a **voice command engine** -- a continuous speech
 assistant powered by Apple's Speech and NaturalLanguage frameworks.
 Say "Hey Vision" to activate, then speak natural language commands to
 select dates, set times, navigate months, copy reports, and more.
@@ -49,30 +49,30 @@ The assistant responds with text-to-speech using a premium male voice.
 
 | Token | Hex | Role |
 |-------|-----|------|
-| Obsidian | `#07070E` | Card backgrounds |
-| Abyss | `#05050B` | Canvas void |
-| Phantom | `#130E2E` | Deep indigo layer |
-| Arcane | `#8B3CFC` | Primary brand accent |
-| Cipher | `#06B6D4` | Interactive elements, totals |
-| Supernova | `#A855F7` | Light purple highlights |
-| Ember | `#F59E0B` | Weekend markers, warnings |
-| Crimson | `#EF4444` | Destructive, weekend borders |
-| Jade | `#10B981` | Terminal output, success |
-| Mint | `#34D399` | Lighter green accent |
-| Frost | `#E2E8F0` | Primary text |
-| Steel | `#64748B` | Secondary text, labels |
-| Ash | `#414C5E` | Tertiary, tick marks |
+| Obsidian | `#020204` | Card backgrounds |
+| Abyss | `#010102` | Canvas void |
+| Phantom | `#040308` | Deep indigo layer |
+| Arcane | `#8426FF` | Electric Violet -- primary brand accent |
+| Cipher | `#00D8F2` | Hyper-Neon Cyan -- interactive elements, totals |
+| Supernova | `#FF26A6` | Vivid Neon Magenta -- highlights |
+| Ember | `#FF7300` | Vivid Safety Orange -- weekend markers, warnings |
+| Crimson | `#FF263F` | Glowing Crimson Red -- destructive, weekend borders |
+| Jade | `#00F273` | Electric Jade -- terminal output, success |
+| Mint | `#1AFFA6` | Glowing Neon Mint -- lighter green accent |
+| Frost | `#F0F5FC` | Luminous Ice -- primary text |
+| Steel | `#7A8AA3` | Chrome Steel -- secondary text, labels |
+| Ash | `#333D4D` | Dark Charcoal -- tertiary, tick marks |
 
 ---
 
 ## Features
 
-- **Voice Command Engine** -- Continuous speech assistant with wake word detection ("Hey Vision"), NLP intent parsing, date/time extraction, pronoun resolution, and text-to-speech responses
+- **Voice Command Engine** -- Continuous speech assistant with sliding-window fuzzy wake word detection ("Hey Vision"), local NLP intent parsing via `VoiceCommandParser`, date/time extraction, pronoun resolution, and text-to-speech responses
 - **Glass Calendar** -- Multi-date selection with crimson/ember weekends and arcane/cipher weekday highlights
 - **Custom Time Sliders** -- Frictionless neon sliders with haptic 15-min snap, triple-gradient track, glowing thumb
 - **Glitch Flip** -- 3D chromatic aberration + 8-slice shatter effect (0.55s, 3 phases)
-- **Dragon Terminal** -- Live ANSI output with ultra-detailed 30-row ASCII dragon blueprint, per-character coloring with 15+ character classes, flame breath and sparkle particles
-- **Hand Gesture Control** -- Front-camera gesture engine powered by AVFoundation + Vision framework with One-Euro adaptive filter for jitter-free tracking
+- **Dragon Terminal** -- Live ANSI output with ASCII dragon blueprint, per-character coloring via `DragonArtRenderer` with 15+ character classes, animated flame breath and sparkle particles
+- **Hand Gesture Control** -- Front-camera gesture engine powered by AVFoundation + Vision framework with One-Euro adaptive filter for jitter-free tracking, scale-invariant pinch detection with hysteresis
 - **Clipboard Export** -- One-tap formatted report with success haptic
 - **Apple Pencil** -- `.hoverEffect(.lift)` on buttons, `.hoverEffect(.highlight)` on calendar cells, pencil drag on sliders
 - **CRT Scanlines** -- Animated phosphor sweep beam with perspective grid floor
@@ -82,18 +82,18 @@ The assistant responds with text-to-speech using a premium male voice.
 
 ## Voice Command Engine
 
-HC v4.0 features a continuous voice assistant that listens passively for a
+HC features a continuous voice assistant that listens passively for a
 wake word, then activates to parse and execute natural language commands.
 
 ### Pipeline
 
 1. **Passive Listening** -- `SFSpeechRecognizer` runs continuously, monitoring for the wake word
-2. **Wake Word Detection** -- Fuzzy matching against "Hey Vision" / "Hi Vision" variants with 0.85 similarity threshold
-3. **Active Session** -- Greeting plays, silence timer starts, assistant awaits command
-4. **NLP Parsing** -- `extractIntent()` classifies the command via regex + keyword matching
+2. **Wake Word Detection** -- Sliding-window fuzzy matching (Levenshtein) against "Hey Vision" / "Hi Vision" and ~20 phonetic variants with 0.85 similarity threshold
+3. **Active Session** -- Greeting plays (600ms delay for one-breath commands), silence timer starts, assistant awaits command
+4. **NLP Parsing** -- `VoiceCommandParser.parse()` classifies the command via regex + fuzzy keyword matching
 5. **Execution** -- ViewModel actions fire (date toggle, time mutation, month navigation, etc.)
-6. **TTS Response** -- `AVSpeechSynthesizer` speaks a contextual confirmation using a cached premium voice
-7. **Session End** -- After execution or timeout, returns to passive listening
+6. **TTS Response** -- `AVSpeechSynthesizer` speaks a contextual confirmation using a cached premium male voice
+7. **Session End** -- After execution or 8s absolute timeout, returns to passive listening
 
 ### Supported Commands
 
@@ -122,7 +122,7 @@ wake word, then activates to parse and execute natural language commands.
 
 ## Hand Gesture Control
 
-HC v3.0+ features a full gesture control system using the iPad's front-facing
+HC features a full gesture control system using the iPad's front-facing
 camera. The pipeline flows through four stages:
 
 1. **Capture** -- AVFoundation camera session captures frames at device framerate
@@ -134,11 +134,11 @@ camera. The pipeline flows through four stages:
 
 | Gesture | Action |
 |---------|--------|
-| Index finger track | Cursor movement |
-| Pinch (thumb + index) | Click / tap |
+| Index finger track | Cursor movement (One-Euro filtered) |
+| Pinch (thumb + index) | Click / tap (scale-invariant with hysteresis) |
 | Wrist rotation | Flip card (calendar / timesheet) |
-| Directional swipe | Navigate calendar months |
-| Hand depth (distance) | Zoom / scale |
+| Directional swipe | Slider drag / list scroll |
+| Hand depth (wrist-MCP) | Depth estimation for pinch calibration |
 
 The `GestureCursorOverlay` renders a cyberpunk-styled cursor with outer ring,
 inner dot, click ripple animation, and crosshair lines that follows the
@@ -166,14 +166,12 @@ tracked hand position in real-time.
                              __\ | |  | | /__
                             (vvv(VVV)(VVV)vvv)
 
-  [SYS] Midnight Forge v4.0 -- 2026-06-09 14:00:00
+  [SYS] Midnight Forge v3.1 -- 2026-06-11 14:00:00
   [SYS] Calendar engine ............. [OK]
   [SYS] Haptic subsystem ............ [OK]
   [SYS] Clipboard bridge ............ [OK]
   [SYS] Pencil input ................ [OK]
   [SYS] Glitch renderer ............. [OK]
-  [SYS] Gesture engine .............. [OK]
-  [SYS] Voice engine ................ [OK]
 
   Voice: ACTIVE | Transcript: "select the fifth"
   [SYS] Voice Engine: ACTIVE. Parsing command stream...

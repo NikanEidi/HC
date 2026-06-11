@@ -38,8 +38,8 @@ with text-to-speech.
 - Fuzzy matching via Levenshtein distance with 0.85 similarity threshold
 - Sliding window (1-3 words) across tokenized transcript
 
-**NLP Parser (`extractIntent`):**
-- Priority-ordered intent classification (switch view > camera > copy > bulk deselect > navigate month > dates > time)
+**NLP Parser (`VoiceCommandParser.parse()`):**
+- Priority-ordered intent classification (camera > copy > switch view > navigate month > bulk deselect > date+time pipeline)
 - Number preprocessing scoped to date parsing only
 - `NSDataDetector` for date entity extraction
 - Regex patterns for "day of month", "month day-list", day ranges
@@ -123,35 +123,37 @@ Full-screen background with 6 composited visual layers, the
 
 **File:** `Views/Components/GlassmorphismBG.swift`
 
-Renders the ultra-detailed 30-row ASCII dragon blueprint with
-per-character color mapping and animated visual effects.
+Renders the ASCII dragon blueprint with per-character color mapping
+and animated visual effects via `getDragonCharColor()`.
 
 **Character Classes (15+):**
-Each character in the dragon art is classified and colored independently:
+Each character is classified and colored based on identity, row position, and animation pulse:
 
 | Character | Class | Color |
 |-----------|-------|-------|
-| `#` | Body | Forge.arcane gradient |
-| `*` | Sparkle | Animated pulse (frost/cipher) |
-| `~` | Flame | Ember/crimson gradient |
-| `^` | Horn | Forge.supernova |
-| `o` | Eye | Forge.crimson (glow) |
-| `/` `\` | Wing edge | Forge.cipher |
-| `(` `)` | Contour | Forge.steel |
-| `V` | Teeth/claw | Forge.frost |
-| `=` | Scale | Forge.jade |
-| `-` | Outline | Forge.ash |
-| `_` | Base | Forge.phantom |
-| `.` | Dot | Forge.steel (dim) |
-| `+` | Joint | Forge.mint |
-| `v` | Tail | Forge.arcane (dim) |
-| ` ` | Space | Transparent |
+| `#` | Body scales | Vertical gradient: Cipher -> Jade -> Arcane -> Supernova -> Ember |
+| `O`, `:` | Eyes (rows 5-6) | Crimson -> Supernova animated pulse |
+| `>`, `<` | Flame breath | Ember -> Crimson animated glow |
+| `{`, `}` | Flame brackets | Supernova -> Ember animated |
+| `*` | Sparkle particles | Mint -> Cipher animated pulse |
+| `=` | Wing membrane / ridges | Cipher -> Arcane (rows 7-11), Supernova (elsewhere) |
+| `~` | Ridges / crown | Supernova (rows 0-2), Arcane -> Cipher (elsewhere) |
+| `^` | Wing tips | Jade (rows 0-4), Jade -> Mint animated |
+| `/`, `\` | Wing edges | Arcane at 70% opacity |
+| `(`, `)` | Structural curves | Cipher at 75% opacity |
+| `V` | Talons (row >= 23) / Wing core (rows 6-7) | Supernova / Ember -> Supernova |
+| `v` | Tail feathers (row >= 23) | Steel -> Supernova blend |
+| `Y` | Tail tip | Supernova |
+| `-`, `_` | Borders | Steel at 45% opacity |
+| `.`, `,` | Dot details | Mint at 50% opacity |
+| ` ` | Space | Steel at 8% opacity |
 
 **Features:**
-- Flame breath particles with animated opacity cycling
-- Sparkle particles with randomized phase offsets
-- Per-character `foregroundColor` mapping via character classification
-- Animated phase parameter drives sparkle/flame pulse effects
+- Flame breath with animated ember/crimson cycling driven by pulse parameter
+- Sparkle particles with mint/cipher animation
+- Body scales with vertical color gradient based on row position
+- `tokenizeDragonLine()` groups consecutive same-colored characters for performance
+- `tokenizeBorderLine()` renders metadata tags with colored keywords
 
 ---
 
@@ -260,8 +262,8 @@ Month-view calendar grid with multi-date selection.
 - **Hovered**: white at 2.5% background
 
 **Frame Reporting:**
-- Reports grid bounds via `CalendarGridFrameKey`
-- Reports individual tappable cells via `TappableFramesKey`
+- Reports individual tappable cells via `TappableFramesKey` (id format: `date_N`)
+- Navigation buttons report frames via `reportTappableFrame(id:)` (`prevMonth`, `nextMonth`)
 - Gesture hover glow responds to `GestureCursorOverlay` position
 
 ---
@@ -303,14 +305,13 @@ for the gesture hit-testing system.
 
 | Key | Value Type | Purpose |
 |-----|-----------|---------|
-| `CalendarGridFrameKey` | `CGRect` | Reports calendar grid bounds for gesture targeting |
-| `CopyButtonFrameKey` | `CGRect` | Reports copy button bounds for gesture click |
-| `SliderFramesKey` | `[SliderFrameInfo]` | Reports slider thumb frames for gesture drag |
-| `TappableFramesKey` | `[TappableElement]` | Reports generic tappable regions (buttons, cells) |
+| `CopyButtonFrameKey` | `CGRect` | Reports copy button bounds for gesture hover glow |
+| `SliderFramesKey` | `[SliderFrameInfo]` | Reports slider track frames for gesture drag |
+| `TappableFramesKey` | `[TappableElement]` | Reports generic tappable regions (buttons, calendar cells) |
 
 **Support Types:**
-- `SliderFrameInfo` -- Contains slider ID, frame rect, and axis orientation
-- `TappableElement` -- Contains element ID and frame rect for hit-testing
+- `SliderFrameInfo` -- Contains `sessionID: UUID`, `isStartSlider: Bool`, and `frame: CGRect`
+- `TappableElement` -- Contains `id: String` and `frame: CGRect` for hit-testing
 
 **View Extension:**
 - `reportTappableFrame(id:)` -- Convenience modifier that wraps a view's
@@ -322,45 +323,57 @@ for the gesture hit-testing system.
 
 **File:** `Utils/HandGestureManager.swift`
 
-Front-camera gesture engine powered by AVFoundation and Apple's Vision
-framework. Tracks hand position and recognizes gestures for touchless
-UI interaction.
+`@Observable` front-camera gesture engine powered by AVFoundation and
+Apple's Vision framework. Tracks hand position and recognizes gestures
+for touchless UI interaction. Supports both left and right hands.
 
-**State Properties:**
-- `indexFingerPosition: CGPoint` -- Filtered finger position in screen coords
-- `isPinching: Bool` -- Thumb-index pinch detected (click)
-- `isTracking: Bool` -- Hand currently visible in frame
-- `wristAngle: CGFloat` -- Current wrist rotation angle
-- `handDepth: CGFloat` -- Estimated hand distance (bounding box size)
-- `swipeDirection: SwipeDirection?` -- Detected swipe (.left, .right, .up, .down)
+**Public State Properties:**
+- `fingerPosition: CGPoint` -- One-Euro filtered index finger position in screen-normalized coords (0,0 top-left to 1,1 bottom-right)
+- `isTracking: Bool` -- Whether any hand is currently being tracked
+- `isCameraAuthorized: Bool` -- Whether camera access has been authorized
+- `isClickDetected: Bool` -- Fires true for ~150ms on pinch-release click
+- `clickPosition: CGPoint` -- Screen-normalized position where click occurred
+- `isFingerDown: Bool` -- True while thumb and index are pinched
+- `shouldSwitchView: Bool` -- Momentarily true when wrist flip detected
+- `horizontalSliderDelta: CGFloat` -- Horizontal velocity delta (points/frame) for slider adjustment
+- `verticalScrollDelta: CGFloat` -- Vertical velocity delta (points/frame) for list scrolling
+- `handDepth: CGFloat` -- Estimated hand depth (wrist-to-middleMCP distance)
 
 **Gesture Types:**
 
 | Gesture | Detection Method | Threshold |
 |---------|-----------------|-----------|
-| Pinch (click) | Thumb tip - index tip distance | < distance threshold |
-| Wrist rotation (flip) | Angle delta from `AngleSample` buffer | > rotation threshold |
-| Directional swipe | Index finger velocity + direction | > velocity threshold |
-| Hand depth (zoom) | Hand bounding box area relative to frame | Continuous |
+| Pinch (click) | Scale-invariant ratio (thumb-index dist / hand size) with hysteresis | Down: 0.40, Up: 0.55, Cooldown: 0.30s |
+| Wrist rotation (flip) | Unwrapped angle change from `AngleSample` buffer within 0.35s window | > 0.60 radians, Cooldown: 1.2s |
+| Directional swipe | 5-sample velocity ring buffer, dominance ratio 1.5x | H: 0.010, V: 0.010 |
+| Hand depth | Wrist-to-middleMCP Euclidean distance with EMA (alpha 0.10) | Continuous |
 
 **One-Euro Filter Parameters:**
 - `OneEuroFilter` -- Single-axis adaptive low-pass filter
 - `OneEuroFilter2D` -- Dual-axis wrapper for 2D point smoothing
-- `minCutoff` -- Minimum cutoff frequency (smoothness at rest)
-- `beta` -- Speed coefficient (responsiveness during motion)
-- `dCutoff` -- Derivative cutoff frequency
+- Current config: `minCutoff: 0.20`, `beta: 0.015`, `dCutoff: 1.0`
+- Tracking gain: 1.05 (centered on 0.5)
+
+**Camera Configuration:**
+- Front camera, VGA preset (640x480) for optimal Vision performance
+- `automaticallyConfiguresApplicationAudioSession = false`
+- No video mirroring (coordinate flip handled in `processHand`)
+- Tracks `UIWindowScene` interface orientation for correct Vision orientation
 
 **Support Types:**
-- `FrameDelegate` -- `AVCaptureVideoDataOutputSampleBufferDelegate` implementation
+- `FrameDelegate` -- `AVCaptureVideoDataOutputSampleBufferDelegate` bridge
 - `AngleSample` -- Timestamped wrist angle sample for rotation detection
+- `OneEuroFilter` / `OneEuroFilter2D` -- Adaptive low-pass filters
 
 **Pipeline:**
-1. AVFoundation captures front-camera frames
-2. Vision framework processes `VNDetectHandPoseRequest`
-3. Hand landmarks extracted (21 joint points)
-4. Index finger tip position passed through `OneEuroFilter2D`
-5. Gesture recognizers evaluate pinch/swipe/rotation/depth
-6. Filtered state published for `GestureCursorOverlay` consumption
+1. AVFoundation captures front-camera frames at VGA resolution
+2. Vision framework processes `VNDetectHandPoseRequest` (max 1 hand)
+3. Landmarks extracted: indexTip, thumbTip, wrist, middleMCP (confidence > 0.15)
+4. Coordinate mapping with orientation-dependent X flip + tracking gain
+5. Index finger position passed through `OneEuroFilter2D` + clamped to [0,1]
+6. Pinch, flip, swipe, and depth evaluated per frame
+7. State dispatched to main thread for `GestureCursorOverlay` consumption
+8. Hand loss: 10 consecutive empty frames triggers full state reset
 
 ---
 
@@ -368,27 +381,33 @@ UI interaction.
 
 **File:** `Views/Main/TrackerHomeView.swift`
 
-Overlay view within `TrackerHomeView` that renders the gesture cursor
-and performs hit-testing against reported UI element frames.
+Separate `View` struct within `TrackerHomeView` that renders the gesture cursor
+and performs hit-testing against reported UI element frames. Extracted as its own
+struct to isolate high-frequency state updates from the rest of the view hierarchy.
 
-**Cursor Rendering:**
-- Outer ring: 36pt circle, Forge.cipher stroke, 2pt width
-- Inner dot: 8pt filled circle, Forge.frost
-- Click ripple: Expanding circle animation on pinch detection
-- Crosshair: Horizontal + vertical lines through cursor center
+**Cursor Rendering (3 states):**
+- **Idle (tracking)**: 24pt outer ring (cipher, 1.2pt stroke) + 4pt inner dot (cipher) + crosshair lines (0.08 opacity)
+- **Hover**: 30pt outer ring (arcane) + 4pt inner dot + 18pt crosshair lines
+- **Finger down (pinch)**: 14pt outer ring (jade, 2pt stroke) + 6pt inner dot (jade) + no crosshair
+- **Click ripple**: 44pt -> 66pt expanding circle (jade, 0.6 opacity -> 0), 0.35s easeOut
 
 **Hit-Testing:**
-- Collects frames from all `PreferenceKey` types
-- Tests cursor position against `CalendarGridFrameKey` frames
-- Tests cursor position against `CopyButtonFrameKey` frame
-- Tests cursor position against `SliderFramesKey` frames
-- Tests cursor position against `TappableFramesKey` frames
-- Matched element receives hover glow / activation on pinch
+- `TappableFramesKey` frames: exact bounding box match, then 25pt proximity fallback
+- `SliderFramesKey` frames: 150pt horizontal + 45pt vertical proximity for slider drag
+- `CopyButtonFrameKey` frame: triggers glow effect on hover
+- Smallest matching element wins (by area) for overlapping frames
+- Context-aware filtering: calendar cells hidden when flipped to timesheet, and vice versa
+
+**Interaction Modes:**
+- **Calendar mode**: Pinch-down freezes cursor, release dispatches action on locked target
+- **Timesheet mode (slider)**: Pinch-down starts slider drag, finger movement adjusts time
+- **Timesheet mode (list)**: Pinch-down anywhere else initiates drag-to-scroll
 
 **State:**
-- Reads `HandGestureManager` position for cursor placement
-- Reads gesture events to trigger corresponding ViewModel actions
-- Animates cursor appearance (fade in/out based on hand tracking state)
+- `frozenCursorPosition` -- Locks cursor position on pinch-down in calendar mode
+- `activeDraggingSlider` -- Currently dragged slider frame info
+- `isDraggingList` / `dragListStartY` / `dragListStartScrollIndex` -- Drag-scroll state
+- `lockedHoveredElementID` / `lockedGestureHoveredDate` -- Pinch-down target lock to prevent release drift
 
 ---
 
@@ -403,22 +422,22 @@ Root composition view with asymmetric 2-panel layout.
 - Body: GlitchFlipContainer (Calendar / Timesheet)
 
 **Right Panel (remaining width):**
-- Title bar: Traffic lights + "DRAGON-TERMINAL v4.0" + LIVE indicator
+- Title bar: Traffic lights (crimson, ember, jade) + "HC://DRAGON-TERMINAL v3.1" + LIVE indicator
 - Status bar: SYS | SESS | HRS | UP (live uptime counter)
 - Body: Scrollable terminal with ASCII dragon header
 - Voice status: Current voice engine state + transcript
 - Voice logs: Rolling assistant log entries
-- Prompt: `root@hc:~$` with blinking cursor
+- Prompt: `root@hc:~$` with blinking cursor (0.45s interval)
 
 **Terminal Content:**
-1. Dragon ASCII art header (ultra-detailed 30-row blueprint)
-2. System boot messages (7 modules, each with [OK] status)
-3. Voice assistant status and transcript
-4. Voice assistant logs
+1. Dragon ASCII art header (24-line blueprint with per-row `DragonArtRenderer` coloring)
+2. System boot messages (5 modules: Calendar engine, Haptic subsystem, Clipboard bridge, Pencil input, Glitch renderer)
+3. Voice assistant status line + live transcript (supernova color)
+4. Voice assistant rolling logs (jade for [OK], crimson for [ERR], steel for [SYS])
 5. Work Session Report section (box-drawn borders)
-6. Per-session entries with [WD]/[WE] tags
+6. Per-session entries with [WD]/[WE] tags and zero-padded indices
 7. Total hours summary
-8. Blinking cursor prompt
+8. Blinking cursor prompt (`root@hc:~$`)
 
 **Internal Types:**
 - `TLine` -- Terminal line model (content + type)

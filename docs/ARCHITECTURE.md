@@ -3,9 +3,9 @@
 ## Overview
 
 HC follows the **MVVM (Model-View-ViewModel)** architecture pattern using SwiftUI's
-native `@Observable` macro for reactive state management. In v4.0, the architecture
-extends with two independent input pipelines: a **voice command engine** that parses
-natural language into ViewModel actions, and a **gesture pipeline** that bridges the
+native `@Observable` macro for reactive state management. The architecture includes
+two independent input pipelines: a **voice command engine** that parses natural
+language into ViewModel actions, and a **gesture pipeline** that bridges the
 front-facing camera to the SwiftUI view hierarchy via hit-testing and preference keys.
 
 ```
@@ -54,7 +54,7 @@ front-facing camera to the SwiftUI view hierarchy via hit-testing and preference
 2. Partial transcription results are checked for the wake word ("Hey Vision")
 3. On wake word match, system enters active session and awaits command
 4. Silence timer fires after speech stops (2.5s in active mode)
-5. `extractIntent()` classifies the command (date selection, time mutation, navigation, etc.)
+5. `VoiceCommandParser.parse()` classifies the command into a `CommandIntent` enum case
 6. Intent is dispatched to `TrackerViewModel` actions (same mutations as touch input)
 7. `AVSpeechSynthesizer` speaks a contextual confirmation
 8. Recognition session restarts seamlessly with zero-gap request swapping
@@ -97,8 +97,8 @@ HC/
 |   |       Month grid with multi-select.
 |   |       Weekend cells: crimson/ember borders.
 |   |       Weekday cells: arcane/cipher borders.
-|   |       Reports frames via CalendarGridFrameKey
-|   |       and TappableFramesKey for gesture hit-testing.
+|   |       Reports frames via TappableFramesKey
+|   |       for gesture hit-testing.
 |   |
 |   |-- Components/
 |   |   |-- GlassmorphismBG.swift
@@ -137,7 +137,6 @@ HC/
 |       |
 |       +-- TimesheetPreferenceKeys.swift
 |           PreferenceKey definitions for cross-view frame reporting.
-|           CalendarGridFrameKey: calendar grid bounds.
 |           CopyButtonFrameKey: copy button bounds.
 |           SliderFrameInfo / SliderFramesKey: slider thumb frames.
 |           TappableElement / TappableFramesKey: generic tappable regions.
@@ -156,12 +155,14 @@ HC/
     |   Support types: FrameDelegate, AngleSample.
     |
     +-- VoiceCommandManager.swift
-        Continuous voice assistant (~1600 lines).
+        Continuous voice assistant (~1730 lines).
+        VoiceCommandManager: @MainActor ObservableObject managing
         SFSpeechRecognizer for wake word + command transcription.
-        NLP intent parser: regex date/time extraction,
-        fuzzy keyword matching, pronoun resolution,
-        weekday pattern detection, month navigation.
-        AVSpeechSynthesizer with cached premium voice.
+        VoiceCommandParser: static struct with local NLP pipeline
+        (regex date/time extraction, Levenshtein fuzzy matching,
+        pronoun resolution, weekday pattern detection, day ranges,
+        NSDataDetector dates, month navigation).
+        AVSpeechSynthesizer with cached premium male voice.
         Thread-safe SpeechRequestHolder for audio buffering.
         CommandIntent enum: selectDate, removeDate, timeMutation,
         navigateMonth, activateCamera, deactivateCamera,
@@ -182,12 +183,12 @@ through a multi-stage pipeline:
                                                         │
                                                         v
 ┌────────────────┐    ┌──────────────────┐    ┌──────────────────┐
-│  TrackerVM     │<───│  Intent Dispatch │<───│  NLP Parser      │
-│  Action Trigger│    │  (CommandIntent  │    │  extractIntent() │
+│  TrackerVM     │<───│  Intent Dispatch │<───│  VoiceCommand    │
+│  Action Trigger│    │  (CommandIntent  │    │  Parser.parse()  │
 │                │    │   enum switch)   │    │  - date regex    │
 └────────────────┘    └──────────────────┘    │  - time regex    │
         │                                      │  - NSDataDetector│
-        v                                      │  - keyword match │
+        v                                      │  - fuzzy match   │
 ┌────────────────┐                             └──────────────────┘
 │  AVSpeech      │
 │  Synthesizer   │
@@ -228,22 +229,28 @@ allow the user to respond.
 
 ### NLP Intent Classification
 
-`extractIntent()` evaluates commands in priority order:
+`VoiceCommandParser.parse()` evaluates commands in priority order:
 
-1. **Switch view** -- "show timesheet", "switch to calendar"
-2. **Camera toggle** -- "open your eyes", "close your eyes"
-3. **Clipboard copy** -- "copy", "export"
-4. **Bulk deselect** -- "remove all", "deselect all", "clear all"
-5. **Navigate month** -- "go to July", "show September"
-6. **Date resolution** -- relative dates, NSDataDetector, regex patterns, weekday patterns, implicit day numbers
-7. **Pronoun resolution** -- "remove them", "set those" -> last selected dates
-8. **Time mutation** -- "9 to 5", "8 hours starting at 9 AM", "standard shift"
-9. **Select/Remove dispatch** -- based on verb keywords + resolved dates
-10. **Unknown** -- fallback with throttled error response (8s cooldown)
+1. **Camera toggle** -- "open your eyes", "activate camera", "camera on/off"
+2. **Clipboard copy** -- "copy", "export", "generate report"
+3. **Switch view** -- "show timesheet", "switch to calendar", "show grid"
+4. **Navigate month** -- "go to July", "show September"
+5. **Bulk deselect** -- "remove all", "deselect all", "clear all"
+6. **Date + Time pipeline**:
+   a. Day range extraction (`extractAndRemoveDayRanges`) -- "june 5 to 10", "select 5 to 10"
+   b. Time range parsing (`parseTimeRange`) -- "9 to 5", "8 hours starting at 9 AM", "standard shift"
+   c. Relative dates (`parseRelativeDate`) -- today, tomorrow, yesterday, next weekday
+   d. NSDataDetector dates (`parseDates`)
+   e. Weekday patterns (`parseWeekdayPatterns`) -- weekdays, weekends, specific day names
+   f. Implicit day numbers (`parseImplicitDaysAndRanges`)
+   g. Pronoun resolution -- "remove them", "set those" -> last selected dates
+7. **Select/Remove dispatch** -- based on verb keywords + resolved dates
+8. **Unknown** -- fallback with throttled error response (8s cooldown)
 
-Number preprocessing (`preprocessNumbers()`) converts spoken ordinals
-("twenty-first" -> "21") but is scoped exclusively to date parsing,
-preventing corruption of intent keywords.
+Preprocessing: `preprocessTimeWords()` converts spoken times ("nine thirty" -> "9:30"),
+`preprocessNumbers()` converts spoken ordinals ("twenty-first" -> "21") scoped
+to date parsing, and `stripTimeRangePatterns()` removes time substrings before
+date extraction to prevent number collision.
 
 ## Gesture System Architecture
 
@@ -272,19 +279,23 @@ The gesture pipeline transforms raw camera frames into precise UI interactions:
 ### One-Euro Adaptive Filter
 - `OneEuroFilter` / `OneEuroFilter2D` provide per-axis jitter suppression
 - Adapts cutoff frequency based on movement speed (fast motion = less filtering)
-- Parameters: `minCutoff`, `beta`, `dCutoff` tuned for responsive cursor tracking
+- Current parameters: `minCutoff: 0.20`, `beta: 0.015`, `dCutoff: 1.0` -- tuned for slow, stable cursor with high tracking gain (1.05)
 
 ### Gesture Recognition
-- **Pinch**: Distance between thumb tip and index tip below threshold -> click
-- **Wrist rotation**: Angle change from `AngleSample` buffer -> card flip
-- **Swipe**: Velocity + direction of index finger movement -> calendar navigation
-- **Depth**: Hand bounding box size relative to frame -> zoom factor
+- **Pinch (click)**: Scale-invariant ratio (thumb-index distance / hand size) with hysteresis (down: 0.40, up: 0.55) and 0.30s cooldown -> click event
+- **Wrist rotation (flip)**: Unwrapped angle change from `AngleSample` buffer > 0.60 radians within 0.35s -> card flip, with 1.2s cooldown
+- **Swipe**: Average velocity from 5-sample ring buffer, directional threshold 0.010, dominance ratio 1.5x -> horizontal slider delta / vertical scroll delta
+- **Depth**: Wrist-to-middleMCP distance with EMA smoothing (alpha 0.10) -> used for scale-invariant pinch calibration
 
 ### Hit-Testing
 - Views report their frames via `PreferenceKey` types (defined in `TimesheetPreferenceKeys.swift`)
 - `GestureCursorOverlay` in `TrackerHomeView` collects all reported frames
+- `TappableFramesKey` provides generic hit regions for buttons, calendar cells, etc.
+- `SliderFramesKey` provides slider track frames for drag gesture mapping
+- `CopyButtonFrameKey` provides the copy button frame for hover glow
 - Cursor position is tested against known frames to determine the active target
 - Matched targets trigger hover states, and gesture events invoke corresponding actions
+- Pinch-down locks the hover target to prevent coordinate drift during release
 
 ## Key Design Decisions
 
